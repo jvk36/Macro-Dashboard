@@ -1,38 +1,64 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { useState, Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { BarChart2 } from "lucide-react";
 
-const queryClient = new QueryClient();
+const OverviewPage    = lazy(() => import("@/pages/OverviewPage"));
+const GrowthPage      = lazy(() => import("@/pages/GrowthPage"));
+const InflationPage   = lazy(() => import("@/pages/InflationPage"));
+const LaborPage       = lazy(() => import("@/pages/LaborPage"));
+const FinancialPage   = lazy(() => import("@/pages/FinancialPage"));
+const GlobalPage      = lazy(() => import("@/pages/GlobalPage"));
+const InvestorGuidePage = lazy(() => import("@/pages/InvestorGuidePage"));
 
-function Home() {
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 2,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+function PageLoader() {
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-gray-900">Replit Agent is building...</h1>
-        <p className="mt-2 text-sm text-gray-600">Your app will appear here once it's ready.</p>
+    <div className="flex items-center justify-center py-24">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center animate-pulse">
+          <BarChart2 className="h-4 w-4 text-white" />
+        </div>
+        <p className="text-sm text-zinc-500 animate-pulse">Loading data…</p>
       </div>
     </div>
   );
 }
 
-function Router() {
-  return (
-    <Switch>
-      <Route path="/" component={Home} />
-      <Route component={NotFound} />
-    </Switch>
-  );
+function ActivePage({ tab }: { tab: string }) {
+  switch (tab) {
+    case "overview":  return <OverviewPage />;
+    case "growth":    return <GrowthPage />;
+    case "inflation": return <InflationPage />;
+    case "labor":     return <LaborPage />;
+    case "financial": return <FinancialPage />;
+    case "global":    return <GlobalPage />;
+    case "investor":  return <InvestorGuidePage />;
+    default:          return <OverviewPage />;
+  }
 }
 
 function App() {
+  const [activeTab, setActiveTab] = useState("overview");
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
+        <DashboardLayout activeTab={activeTab} onTabChange={setActiveTab}>
+          <Suspense fallback={<PageLoader />}>
+            <ActivePage tab={activeTab} />
+          </Suspense>
+        </DashboardLayout>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

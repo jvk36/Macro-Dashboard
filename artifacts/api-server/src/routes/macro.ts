@@ -1,0 +1,566 @@
+import { Router, type IRouter } from "express";
+import {
+  buildSeriesHistory,
+  getLatestValue,
+  getObservations,
+  getSeriesInfo,
+} from "../lib/fred";
+
+const router: IRouter = Router();
+
+const SERIES = {
+  GDP: "A191RL1Q225SBEA",
+  CPI: "CPIAUCSL",
+  CORE_CPI: "CPILFESL",
+  PCE: "PCEPI",
+  CORE_PCE: "PCEPILFE",
+  PPI: "PPIACO",
+  UNRATE: "UNRATE",
+  FED_FUNDS: "FEDFUNDS",
+  T10Y: "DGS10",
+  T2Y: "DGS2",
+  T3M: "DGS3MO",
+  T1Y: "DGS1",
+  T5Y: "DGS5",
+  T7Y: "DGS7",
+  T20Y: "DGS20",
+  T30Y: "DGS30",
+  T10Y2Y: "T10Y2Y",
+  T10Y3M: "T10Y3M",
+  HY_SPREAD: "BAMLH0A0HYM2",
+  IG_SPREAD: "BAMLC0A0CM",
+  NFP: "PAYEMS",
+  ISM_MFG: "INDPRO",
+  INITIAL_CLAIMS: "ICSA",
+  CONT_CLAIMS: "CCSA",
+  JOLTS: "JTSJOL",
+  PARTICIPATION: "CIVPART",
+  AWE: "CES0500000003",
+  IP: "INDPRO",
+  RETAIL: "RSAFS",
+  BREAKEVEN_5Y: "T5YIE",
+  BREAKEVEN_10Y: "T10YIE",
+  RECESSION_PROB: "RECPROUSM156N",
+  CONSUMER_SENTIMENT: "UMCSENT",
+};
+
+function classifySignal(
+  value: number,
+  thresholds: { positive: [number, number]; neutral: [number, number]; negative: [number, number]; warning?: [number, number] },
+): "positive" | "neutral" | "negative" | "warning" {
+  if (value >= thresholds.positive[0] && value <= thresholds.positive[1]) return "positive";
+  if (value >= thresholds.neutral[0] && value <= thresholds.neutral[1]) return "neutral";
+  if (thresholds.warning && value >= thresholds.warning[0] && value <= thresholds.warning[1]) return "warning";
+  return "negative";
+}
+
+router.get("/macro/overview", async (req, res) => {
+  try {
+    const [
+      gdpData,
+      cpiData,
+      unrateData,
+      fedFundsData,
+      t10yData,
+      t2yData,
+      ismData,
+      hySpreadData,
+      nfpData,
+      t10y2yData,
+      recProbData,
+    ] = await Promise.all([
+      getLatestValue(SERIES.GDP),
+      getObservations(SERIES.CPI, 15),
+      getLatestValue(SERIES.UNRATE),
+      getLatestValue(SERIES.FED_FUNDS),
+      getLatestValue(SERIES.T10Y),
+      getLatestValue(SERIES.T2Y),
+      getLatestValue(SERIES.ISM_MFG),
+      getLatestValue(SERIES.HY_SPREAD),
+      getObservations(SERIES.NFP, 3),
+      getLatestValue(SERIES.T10Y2Y),
+      getLatestValue(SERIES.RECESSION_PROB),
+    ]);
+
+    const cpiValid = cpiData.filter((o) => o.value !== ".").map((o) => parseFloat(o.value));
+    const cpiYoY =
+      cpiValid.length >= 13
+        ? ((cpiValid[cpiValid.length - 1] - cpiValid[cpiValid.length - 13]) / cpiValid[cpiValid.length - 13]) * 100
+        : null;
+    const cpiLatestDate = cpiData[cpiData.length - 1]?.date ?? "";
+
+    const nfpValid = nfpData.filter((o) => o.value !== ".").map((o) => ({ date: o.date, value: parseFloat(o.value) }));
+    const nfpChange =
+      nfpValid.length >= 2
+        ? nfpValid[nfpValid.length - 1].value - nfpValid[nfpValid.length - 2].value
+        : null;
+    const nfpDate = nfpValid[nfpValid.length - 1]?.date ?? "";
+
+    const t10yPrevData = await getObservations(SERIES.T10Y, 60);
+    const t10yObs = t10yPrevData.filter((o) => o.value !== ".");
+    const t10yPrev = t10yObs.length >= 22 ? parseFloat(t10yObs[t10yObs.length - 22].value) : null;
+    const t10yMoMChange = t10yPrev ? t10yData.value - t10yPrev : null;
+
+    const spread2s10s = t10y2yData.value * 100;
+    const isInverted = spread2s10s < 0;
+
+    const gdpSignal: "positive" | "neutral" | "negative" =
+      gdpData.value >= 2.5 ? "positive" : gdpData.value >= 0 ? "neutral" : "negative";
+
+    const cpiSignal: "positive" | "neutral" | "negative" | "warning" =
+      cpiYoY === null ? "neutral"
+        : cpiYoY <= 2.5 ? "positive"
+        : cpiYoY <= 4 ? "warning"
+        : "negative";
+
+    const unrateSignal: "positive" | "neutral" | "negative" =
+      unrateData.value <= 4.5 ? "positive" : unrateData.value <= 6 ? "neutral" : "negative";
+
+    const fedSignal: "positive" | "neutral" | "negative" =
+      fedFundsData.value <= 2.5 ? "positive" : fedFundsData.value <= 5 ? "neutral" : "negative";
+
+    const t10ySignal: "positive" | "neutral" | "negative" | "warning" =
+      t10yMoMChange === null ? "neutral"
+        : t10yMoMChange < -0.1 ? "positive"
+        : t10yMoMChange < 0.1 ? "neutral"
+        : t10yMoMChange < 0.3 ? "warning"
+        : "negative";
+
+    const ipObs = await getObservations(SERIES.ISM_MFG, 14);
+    const ipParsed = ipObs.filter((o) => o.value !== ".").map((o) => parseFloat(o.value));
+    const ipYoY = ipParsed.length >= 13
+      ? ((ipParsed[ipParsed.length - 1] - ipParsed[ipParsed.length - 13]) / ipParsed[ipParsed.length - 13]) * 100
+      : null;
+    const ipLatestDate = ipObs[ipObs.length - 1]?.date ?? "";
+    const ipValue = ipYoY ?? 0;
+
+    const ismSignal: "positive" | "neutral" | "negative" =
+      ipValue >= 2 ? "positive" : ipValue >= -1 ? "neutral" : "negative";
+
+    const keyReadings = [
+      {
+        id: "gdp",
+        label: "GDP Growth (Annualized)",
+        value: gdpData.value,
+        unit: "%",
+        signal: gdpSignal,
+        signalLabel: gdpData.value >= 2.5 ? "Expansion" : gdpData.value >= 0 ? "Neutral" : "Recessionary",
+        description: "Real GDP annualized growth rate",
+        lastUpdated: gdpData.date,
+        previousValue: null,
+        change: null,
+      },
+      {
+        id: "cpi",
+        label: "CPI (YoY)",
+        value: cpiYoY ?? 0,
+        unit: "%",
+        signal: cpiSignal,
+        signalLabel:
+          cpiYoY === null ? "N/A"
+            : cpiYoY <= 2.0 ? "Below Target"
+            : cpiYoY <= 2.5 ? "At Target"
+            : "Above Target",
+        description: "Consumer Price Index year-over-year change vs 2% Fed target",
+        lastUpdated: cpiLatestDate,
+      },
+      {
+        id: "unrate",
+        label: "Unemployment Rate",
+        value: unrateData.value,
+        unit: "%",
+        signal: unrateSignal,
+        signalLabel:
+          unrateData.value <= 4.0 ? "Full Employment"
+            : unrateData.value <= 5.0 ? "Near Full"
+            : unrateData.value <= 6.5 ? "Elevated"
+            : "High Unemployment",
+        description: "Civilian unemployment rate",
+        lastUpdated: unrateData.date,
+      },
+      {
+        id: "fedfunds",
+        label: "Fed Funds Rate",
+        value: fedFundsData.value,
+        unit: "%",
+        signal: fedSignal,
+        signalLabel:
+          fedFundsData.value <= 1.5 ? "Accommodative"
+            : fedFundsData.value <= 3.5 ? "Neutral"
+            : "Restrictive",
+        description: "Federal Funds Effective Rate",
+        lastUpdated: fedFundsData.date,
+      },
+      {
+        id: "t10y",
+        label: "10-Year Treasury Yield",
+        value: t10yData.value,
+        unit: "%",
+        signal: t10ySignal,
+        signalLabel:
+          t10yMoMChange === null ? "N/A"
+            : t10yMoMChange >= 0.1 ? `+${t10yMoMChange.toFixed(2)}% MoM`
+            : t10yMoMChange <= -0.1 ? `${t10yMoMChange.toFixed(2)}% MoM`
+            : "Stable MoM",
+        description: "10-Year US Treasury yield, month-over-month change",
+        lastUpdated: t10yData.date,
+        change: t10yMoMChange,
+      },
+      {
+        id: "indpro",
+        label: "Industrial Production (YoY)",
+        value: ipValue,
+        unit: "%",
+        signal: ismSignal,
+        signalLabel:
+          ipValue >= 2 ? "Expansion" : ipValue >= -1 ? "Neutral" : "Contraction",
+        description: "Industrial Production Index, year-over-year change",
+        lastUpdated: ipLatestDate,
+      },
+    ];
+
+    const yieldCurveSignal: "positive" | "neutral" | "negative" | "warning" =
+      spread2s10s >= 50 ? "positive"
+        : spread2s10s >= 0 ? "neutral"
+        : spread2s10s >= -50 ? "warning"
+        : "negative";
+
+    // FRED BAMLH0A0HYM2 is in percent (e.g. 3.5 = 3.5% = 350 bps)
+    const hySpreadBps = hySpreadData.value * 100;
+    const hySignal: "positive" | "neutral" | "negative" | "warning" =
+      hySpreadBps <= 350 ? "positive"
+        : hySpreadBps <= 500 ? "neutral"
+        : hySpreadBps <= 700 ? "warning"
+        : "negative";
+
+    // PAYEMS is in thousands of employees; nfpChange is therefore in thousands (200 = 200K jobs)
+    const laborSignal: "positive" | "neutral" | "negative" | "warning" =
+      nfpChange === null ? "neutral"
+        : nfpChange >= 200 ? "positive"
+        : nfpChange >= 100 ? "neutral"
+        : nfpChange >= 0 ? "warning"
+        : "negative";
+
+    const recSignal: "positive" | "neutral" | "negative" | "warning" =
+      recProbData.value <= 15 ? "positive"
+        : recProbData.value <= 30 ? "neutral"
+        : recProbData.value <= 50 ? "warning"
+        : "negative";
+
+    const signals = [
+      {
+        id: "yield_curve",
+        label: "Yield Curve (2s10s)",
+        value: spread2s10s,
+        unit: "bps",
+        signal: yieldCurveSignal,
+        signalLabel: isInverted ? "Inverted" : "Normal",
+        interpretation: isInverted
+          ? "The 2-10 yield curve is inverted, historically a leading indicator of recession. Investors demand more yield for short-term risk than long-term, signaling tight financial conditions."
+          : spread2s10s < 50
+          ? "The yield curve is flat-to-normal. Modest term premium suggests cautious growth expectations with no near-term recession signal."
+          : "A positively sloped yield curve signals healthy growth expectations and accommodative conditions for banks.",
+        detail: `${spread2s10s >= 0 ? "+" : ""}${spread2s10s.toFixed(0)} bps`,
+        lastUpdated: t10y2yData.date,
+      },
+      {
+        id: "hy_spreads",
+        label: "Credit Spreads (HY OAS)",
+        value: hySpreadBps,
+        unit: "bps",
+        signal: hySignal,
+        signalLabel:
+          hySpreadBps <= 350 ? "Tight (Risk-On)"
+            : hySpreadBps <= 500 ? "Normal"
+            : hySpreadBps <= 700 ? "Widening (Caution)"
+            : "Wide (Stress)",
+        interpretation:
+          hySpreadBps <= 350
+            ? `HY credit spreads are tight at ${hySpreadBps.toFixed(0)} bps, reflecting strong investor risk appetite and easy credit conditions. Typically supportive of equities.`
+            : hySpreadBps <= 500
+            ? `HY credit spreads (${hySpreadBps.toFixed(0)} bps) are near historical norms. Credit conditions are balanced with moderate risk appetite.`
+            : hySpreadBps <= 700
+            ? `HY spreads at ${hySpreadBps.toFixed(0)} bps are widening, signaling rising credit stress and potential tightening of financial conditions. Monitor closely.`
+            : `HY spreads are elevated at ${hySpreadBps.toFixed(0)} bps, indicating significant credit stress. Historically associated with economic contraction.`,
+        detail: `${hySpreadBps.toFixed(0)} bps`,
+        lastUpdated: hySpreadData.date,
+      },
+      {
+        id: "labor",
+        label: "Labor Market (NFP MoM)",
+        value: nfpChange ?? 0,
+        unit: "K",
+        signal: laborSignal,
+        signalLabel:
+          nfpChange === null ? "N/A"
+            : nfpChange >= 200 ? "Strong"
+            : nfpChange >= 100 ? "Moderate"
+            : nfpChange >= 0 ? "Weak"
+            : "Contracting",
+        interpretation:
+          nfpChange === null
+            ? "NFP data unavailable."
+            : nfpChange >= 200
+            ? `Non-farm payrolls added ${nfpChange.toFixed(0)}K jobs, well above the ~150K needed to absorb new entrants. Labor market remains robust.`
+            : nfpChange >= 100
+            ? `Non-farm payrolls added ${nfpChange.toFixed(0)}K jobs — sufficient to maintain a stable labor market but below robust growth thresholds.`
+            : nfpChange >= 0
+            ? `Non-farm payrolls added only ${nfpChange.toFixed(0)}K jobs, below the pace needed to sustain labor market health. Weakness emerging.`
+            : `Non-farm payrolls contracted by ${Math.abs(nfpChange).toFixed(0)}K jobs — a significant warning sign of labor market deterioration.`,
+        detail: `${nfpChange !== null ? (nfpChange >= 0 ? "+" : "") + nfpChange.toFixed(0) + "K" : "N/A"}`,
+        lastUpdated: nfpDate,
+      },
+      {
+        id: "recession_prob",
+        label: "Recession Probability",
+        value: recProbData.value,
+        unit: "%",
+        signal: recSignal,
+        signalLabel:
+          recProbData.value <= 15 ? "Low Risk"
+            : recProbData.value <= 30 ? "Elevated"
+            : recProbData.value <= 50 ? "High Risk"
+            : "Recessionary",
+        interpretation:
+          recProbData.value <= 15
+            ? `NY Fed model puts 12-month recession probability at ${recProbData.value.toFixed(1)}% — historically consistent with continued expansion.`
+            : recProbData.value <= 30
+            ? `NY Fed model shows ${recProbData.value.toFixed(1)}% recession probability — elevated but not alarming. Warrants monitoring.`
+            : recProbData.value <= 50
+            ? `NY Fed model signals ${recProbData.value.toFixed(1)}% recession risk — historically a warning threshold. Defensive positioning warranted.`
+            : `NY Fed model indicates ${recProbData.value.toFixed(1)}% recession probability — above the 50% level historically consistent with recession.`,
+        detail: `${recProbData.value.toFixed(1)}%`,
+        lastUpdated: recProbData.date,
+      },
+    ];
+
+    const gdpValue = gdpData.value;
+    const cpiValue = cpiYoY ?? 0;
+    const recProb = recProbData.value;
+
+    let phase: "early_expansion" | "mid_expansion" | "late_expansion" | "early_contraction" | "recession" | "recovery";
+    let cycleLabel: string;
+    let cycleDescription: string;
+    let confidence = 0;
+
+    if (recProb > 50 || gdpValue < -1) {
+      phase = "recession";
+      cycleLabel = "Recession";
+      cycleDescription = "Economic output is contracting. Risk assets typically underperform. Bonds and defensives outperform.";
+      confidence = Math.min(90, recProb);
+    } else if (recProb > 30 || gdpValue < 0.5) {
+      phase = "early_contraction";
+      cycleLabel = "Late Cycle / Contraction Risk";
+      cycleDescription = "Growth is slowing with elevated recession risk. Consider reducing cyclical exposure and increasing quality.";
+      confidence = 60;
+    } else if (gdpValue >= 2.5 && cpiValue > 3.5 && fedFundsData.value > 3) {
+      phase = "late_expansion";
+      cycleLabel = "Late Cycle Expansion";
+      cycleDescription = "Strong growth but inflation is elevated and monetary policy is tightening. Historically favors commodities and value over growth.";
+      confidence = 70;
+    } else if (gdpValue >= 1.5 && cpiValue <= 3.5) {
+      phase = "mid_expansion";
+      cycleLabel = "Mid-Cycle Expansion";
+      cycleDescription = "Solid growth with contained inflation — the 'Goldilocks' scenario. Broadly supportive of equities, especially cyclicals.";
+      confidence = 75;
+    } else {
+      phase = "early_expansion";
+      cycleLabel = "Early Expansion / Recovery";
+      cycleDescription = "Economy is recovering with slack remaining. Monetary policy likely accommodative. Cyclicals and small caps tend to outperform.";
+      confidence = 60;
+    }
+
+    res.json({
+      keyReadings,
+      signals,
+      marketCycle: {
+        phase,
+        label: cycleLabel,
+        confidence,
+        description: cycleDescription,
+      },
+      lastRefreshed: new Date().toISOString(),
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch overview data");
+    res.status(500).json({ error: "Failed to fetch overview data" });
+  }
+});
+
+router.get("/macro/series/:seriesId", async (req, res) => {
+  try {
+    const { seriesId } = req.params;
+    const limit = parseInt(req.query["limit"] as string ?? "60", 10);
+    const data = await buildSeriesHistory(seriesId, limit);
+    res.json(data);
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch series history");
+    res.status(500).json({ error: "Failed to fetch series data" });
+  }
+});
+
+router.get("/macro/yield-curve", async (req, res) => {
+  try {
+    const maturities = [
+      { maturity: "3M", years: 0.25, seriesId: SERIES.T3M },
+      { maturity: "1Y", years: 1, seriesId: SERIES.T1Y },
+      { maturity: "2Y", years: 2, seriesId: SERIES.T2Y },
+      { maturity: "5Y", years: 5, seriesId: SERIES.T5Y },
+      { maturity: "7Y", years: 7, seriesId: SERIES.T7Y },
+      { maturity: "10Y", years: 10, seriesId: SERIES.T10Y },
+      { maturity: "20Y", years: 20, seriesId: SERIES.T20Y },
+      { maturity: "30Y", years: 30, seriesId: SERIES.T30Y },
+    ];
+
+    const [points2s10s, points3m10y, ...maturityValues] = await Promise.all([
+      getLatestValue(SERIES.T10Y2Y),
+      getLatestValue(SERIES.T10Y3M),
+      ...maturities.map((m) => getLatestValue(m.seriesId)),
+    ]);
+
+    const curvePoints = maturities.map((m, i) => ({
+      maturity: m.maturity,
+      years: m.years,
+      yield: maturityValues[i].value,
+    }));
+
+    const spread2s10s = points2s10s.value * 100;
+    const spread3m10y = points3m10y.value * 100;
+    const isInverted = spread2s10s < 0;
+
+    const signal: "positive" | "neutral" | "negative" | "warning" =
+      spread2s10s >= 50 ? "positive"
+        : spread2s10s >= 0 ? "neutral"
+        : spread2s10s >= -50 ? "warning"
+        : "negative";
+
+    res.json({
+      points: curvePoints,
+      spread2s10s,
+      spread3m10y,
+      isInverted,
+      signal,
+      interpretation: isInverted
+        ? `The yield curve is inverted (2s10s: ${spread2s10s.toFixed(0)} bps). Every US recession since 1950 has been preceded by an inversion. Monitor duration closely.`
+        : `The yield curve is positively sloped (2s10s: +${spread2s10s.toFixed(0)} bps), consistent with a healthy growth outlook.`,
+      asOf: points2s10s.date,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch yield curve");
+    res.status(500).json({ error: "Failed to fetch yield curve" });
+  }
+});
+
+router.get("/macro/recession-probability", async (req, res) => {
+  try {
+    const history = await buildSeriesHistory(SERIES.RECESSION_PROB, 120);
+    const latest = history.observations[history.observations.length - 1];
+    const signal: "positive" | "neutral" | "negative" | "warning" =
+      latest.value <= 15 ? "positive"
+        : latest.value <= 30 ? "neutral"
+        : latest.value <= 50 ? "warning"
+        : "negative";
+    res.json({
+      probability: latest.value,
+      signal,
+      model: "NY Fed Yield Curve Model",
+      history: history.observations,
+      lastUpdated: latest.date,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch recession probability");
+    res.status(500).json({ error: "Failed to fetch recession probability" });
+  }
+});
+
+router.get("/macro/tab/growth", async (req, res) => {
+  try {
+    const [gdpGrowth, industrialProduction, retailSales, manufacturingPMI] = await Promise.all([
+      buildSeriesHistory(SERIES.GDP, 40),
+      buildSeriesHistory(SERIES.IP, 60),
+      buildSeriesHistory(SERIES.RETAIL, 60),
+      buildSeriesHistory(SERIES.ISM_MFG, 60),
+    ]);
+    res.json({ gdpGrowth, industrialProduction, retailSales, manufacturingPMI, servicesPMI: manufacturingPMI, leadingIndicators: [] });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch growth tab");
+    res.status(500).json({ error: "Failed to fetch growth data" });
+  }
+});
+
+router.get("/macro/tab/inflation", async (req, res) => {
+  try {
+    const [cpi, coreInflation, pce, corePce, ppi, breakevens5y, breakevens10y] = await Promise.all([
+      buildSeriesHistory(SERIES.CPI, 60),
+      buildSeriesHistory(SERIES.CORE_CPI, 60),
+      buildSeriesHistory(SERIES.PCE, 60),
+      buildSeriesHistory(SERIES.CORE_PCE, 60),
+      buildSeriesHistory(SERIES.PPI, 60),
+      buildSeriesHistory(SERIES.BREAKEVEN_5Y, 60),
+      buildSeriesHistory(SERIES.BREAKEVEN_10Y, 60),
+    ]);
+    res.json({ cpi, coreInflation, pce, corePce, ppi, breakevens5y, breakevens10y, keyReadings: [] });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch inflation tab");
+    res.status(500).json({ error: "Failed to fetch inflation data" });
+  }
+});
+
+router.get("/macro/tab/labor", async (req, res) => {
+  try {
+    const [nfp, unemploymentRate, participationRate, averageHourlyEarnings, joblessClaimsInitial, jolts] = await Promise.all([
+      buildSeriesHistory(SERIES.NFP, 60),
+      buildSeriesHistory(SERIES.UNRATE, 60),
+      buildSeriesHistory(SERIES.PARTICIPATION, 60),
+      buildSeriesHistory(SERIES.AWE, 60),
+      buildSeriesHistory(SERIES.INITIAL_CLAIMS, 60),
+      buildSeriesHistory(SERIES.JOLTS, 60),
+    ]);
+    res.json({ nfp, unemploymentRate, participationRate, averageHourlyEarnings, joblessClaimsInitial, jolts, keyReadings: [] });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch labor tab");
+    res.status(500).json({ error: "Failed to fetch labor data" });
+  }
+});
+
+router.get("/macro/tab/financial", async (req, res) => {
+  try {
+    const [hySpread, igSpread, fedFundsRate, treasury10y, treasury2y] = await Promise.all([
+      buildSeriesHistory(SERIES.HY_SPREAD, 60),
+      buildSeriesHistory(SERIES.IG_SPREAD, 60),
+      buildSeriesHistory(SERIES.FED_FUNDS, 60),
+      buildSeriesHistory(SERIES.T10Y, 60),
+      buildSeriesHistory(SERIES.T2Y, 60),
+    ]);
+
+    const maturities = [
+      { maturity: "3M", years: 0.25, seriesId: SERIES.T3M },
+      { maturity: "1Y", years: 1, seriesId: SERIES.T1Y },
+      { maturity: "2Y", years: 2, seriesId: SERIES.T2Y },
+      { maturity: "5Y", years: 5, seriesId: SERIES.T5Y },
+      { maturity: "10Y", years: 10, seriesId: SERIES.T10Y },
+      { maturity: "30Y", years: 30, seriesId: SERIES.T30Y },
+    ];
+    const [t10y2y, t10y3m, ...matVals] = await Promise.all([
+      getLatestValue(SERIES.T10Y2Y),
+      getLatestValue(SERIES.T10Y3M),
+      ...maturities.map((m) => getLatestValue(m.seriesId)),
+    ]);
+    const spread2s10s = t10y2y.value * 100;
+    const yieldCurve = {
+      points: maturities.map((m, i) => ({ maturity: m.maturity, years: m.years, yield: matVals[i].value })),
+      spread2s10s,
+      spread3m10y: t10y3m.value * 100,
+      isInverted: spread2s10s < 0,
+      signal: (spread2s10s >= 50 ? "positive" : spread2s10s >= 0 ? "neutral" : spread2s10s >= -50 ? "warning" : "negative") as "positive" | "neutral" | "negative" | "warning",
+      interpretation: spread2s10s < 0 ? "Yield curve inverted" : "Yield curve normal",
+      asOf: t10y2y.date,
+    };
+    res.json({ hySpread, igSpread, fedFundsRate, treasury10y, treasury2y, yieldCurve, keyReadings: [] });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch financial tab");
+    res.status(500).json({ error: "Failed to fetch financial data" });
+  }
+});
+
+export default router;
