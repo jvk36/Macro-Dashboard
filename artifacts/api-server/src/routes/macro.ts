@@ -38,6 +38,10 @@ const SERIES = {
   AWE: "CES0500000003",
   IP: "INDPRO",
   RETAIL: "RSAFS",
+  RETAIL_EX_AUTO: "RSXFS",
+  DURABLE_GOODS: "DGORDER",
+  BUILDING_PERMITS: "PERMIT",
+  CB_LEI: "USSLIND",
   BREAKEVEN_5Y: "T5YIE",
   BREAKEVEN_10Y: "T10YIE",
   RECESSION_PROB: "RECPROUSM156N",
@@ -473,15 +477,306 @@ router.get("/macro/recession-probability", async (req, res) => {
   }
 });
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function momPct(obs: { value: string }[]): number | null {
+  const valid = obs.filter((o) => o.value !== ".").map((o) => parseFloat(o.value));
+  if (valid.length < 2) return null;
+  const latest = valid[valid.length - 1];
+  const prev = valid[valid.length - 2];
+  return prev !== 0 ? ((latest - prev) / Math.abs(prev)) * 100 : null;
+}
+
+function momAbs(obs: { value: string }[]): number | null {
+  const valid = obs.filter((o) => o.value !== ".").map((o) => parseFloat(o.value));
+  if (valid.length < 2) return null;
+  return valid[valid.length - 1] - valid[valid.length - 2];
+}
+
+async function getGDPNow(): Promise<{ value: number; date: string } | null> {
+  try {
+    const res = await fetch("https://www.atlantafed.org/cqer/research/gdpnow", {
+      signal: AbortSignal.timeout(8000),
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; MacroDash/1.0; +https://replit.com)" },
+    });
+    const html = await res.text();
+    // The page contains text like "X.X percent" near GDPNow
+    const patterns = [
+      /model estimate[^%\d]*([-\d.]+)\s*percent/i,
+      /GDPNow[^%\d]*([-\d.]+)\s*percent/i,
+      /tracking[^%\d]*([-\d.]+)\s*percent/i,
+      /"gdpnow[^"]*"[^>]*>[^<]*([-\d.]+)/i,
+    ];
+    for (const pat of patterns) {
+      const m = html.match(pat);
+      if (m) {
+        const val = parseFloat(m[1]);
+        if (!isNaN(val) && val > -10 && val < 15) {
+          return { value: val, date: new Date().toISOString().split("T")[0] };
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 router.get("/macro/tab/growth", async (req, res) => {
   try {
-    const [gdpGrowth, industrialProduction, retailSales, manufacturingPMI] = await Promise.all([
-      buildSeriesHistory(SERIES.GDP, 40),
-      buildSeriesHistory(SERIES.IP, 60),
-      buildSeriesHistory(SERIES.RETAIL, 60),
-      buildSeriesHistory(SERIES.ISM_MFG, 60),
+    const [
+      gdpRes,
+      cpiRes,
+      fedFundsRes,
+      recProbRes,
+      ipRes,
+      retailExAutoRes,
+      durableRes,
+      permitsRes,
+      cbLeiRes,
+    ] = await Promise.allSettled([
+      getObservations(SERIES.GDP, 5),
+      getObservations(SERIES.CPI, 15),
+      getLatestValue(SERIES.FED_FUNDS),
+      getLatestValue(SERIES.RECESSION_PROB),
+      getObservations(SERIES.IP, 4),
+      getObservations(SERIES.RETAIL_EX_AUTO, 4),
+      getObservations(SERIES.DURABLE_GOODS, 4),
+      getObservations(SERIES.BUILDING_PERMITS, 4),
+      getObservations(SERIES.CB_LEI, 4),
     ]);
-    res.json({ gdpGrowth, industrialProduction, retailSales, manufacturingPMI, servicesPMI: manufacturingPMI, leadingIndicators: [] });
+
+    const gdpNowRes = await getGDPNow();
+
+    // ── Cycle phase (same logic as overview) ──────────────────────────────────
+    const gdpObs = gdpRes.status === "fulfilled" ? gdpRes.value : [];
+    const gdpLatest = gdpObs.filter((o) => o.value !== ".").slice(-1)[0];
+    const gdpValue = gdpLatest ? parseFloat(gdpLatest.value) : 0;
+    const gdpDate = gdpLatest?.date ?? "";
+
+    const cpiObs = cpiRes.status === "fulfilled" ? cpiRes.value : [];
+    const cpiValid = cpiObs.filter((o) => o.value !== ".").map((o) => parseFloat(o.value));
+    const cpiYoY = cpiValid.length >= 13
+      ? ((cpiValid[cpiValid.length - 1] - cpiValid[cpiValid.length - 13]) / cpiValid[cpiValid.length - 13]) * 100
+      : null;
+
+    const fedFunds = fedFundsRes.status === "fulfilled" ? fedFundsRes.value.value : 0;
+    const recProb = recProbRes.status === "fulfilled" ? recProbRes.value.value : 0;
+    const cpiValue = cpiYoY ?? 0;
+
+    type CyclePhase = "early_expansion" | "mid_expansion" | "late_expansion" | "recession";
+    let phase: CyclePhase;
+    let cycleLabel: string;
+    let cycleDescription: string;
+    let confidence = 0;
+    let sliderPosition = 0;
+
+    if (recProb > 50 || gdpValue < -1) {
+      phase = "recession";
+      cycleLabel = "Recession";
+      cycleDescription = "Economic output is contracting. Risk assets typically underperform. Bonds and defensives tend to outperform.";
+      confidence = Math.min(90, recProb);
+      sliderPosition = 88;
+    } else if (recProb > 30 || gdpValue < 0.5) {
+      phase = "late_expansion";
+      cycleLabel = "Late Expansion";
+      cycleDescription = "Growth is slowing with elevated recession risk. Consider reducing cyclical exposure and increasing quality.";
+      confidence = 60;
+      sliderPosition = 70;
+    } else if (gdpValue >= 2.5 && cpiValue > 3.5 && fedFunds > 3) {
+      phase = "late_expansion";
+      cycleLabel = "Late Expansion";
+      cycleDescription = "Strong growth but inflation is elevated and monetary policy is tightening. Historically favors commodities and value over growth.";
+      confidence = 70;
+      sliderPosition = 65;
+    } else if (gdpValue >= 1.5 && cpiValue <= 3.5) {
+      phase = "mid_expansion";
+      cycleLabel = "Mid Expansion";
+      cycleDescription = "Solid growth with contained inflation — the 'Goldilocks' scenario. Broadly supportive of equities, especially cyclicals.";
+      confidence = 75;
+      sliderPosition = 38;
+    } else {
+      phase = "early_expansion";
+      cycleLabel = "Early Expansion";
+      cycleDescription = "Economy is recovering with slack remaining. Monetary policy likely accommodative. Cyclicals and small caps tend to outperform.";
+      confidence = 60;
+      sliderPosition = 12;
+    }
+
+    // ── Indicator computations ────────────────────────────────────────────────
+    const ipObs = ipRes.status === "fulfilled" ? ipRes.value : [];
+    const ipMoM = momPct(ipObs);
+    const ipDate = ipObs.filter((o) => o.value !== ".").slice(-1)[0]?.date ?? "";
+
+    const retailObs = retailExAutoRes.status === "fulfilled" ? retailExAutoRes.value : [];
+    const retailMoM = momPct(retailObs);
+    const retailDate = retailObs.filter((o) => o.value !== ".").slice(-1)[0]?.date ?? "";
+
+    const durableObs = durableRes.status === "fulfilled" ? durableRes.value : [];
+    const durableMoM = momPct(durableObs);
+    const durableDate = durableObs.filter((o) => o.value !== ".").slice(-1)[0]?.date ?? "";
+
+    const permitsObs = permitsRes.status === "fulfilled" ? permitsRes.value : [];
+    const permitsValid = permitsObs.filter((o) => o.value !== ".");
+    const permitsLatest = permitsValid.slice(-1)[0];
+    const permitsValue = permitsLatest ? parseFloat(permitsLatest.value) : null;
+    const permitsDate = permitsLatest?.date ?? "";
+
+    const cbLeiObs = cbLeiRes.status === "fulfilled" ? cbLeiRes.value : [];
+    const cbLeiMoM = momAbs(cbLeiObs);
+    const cbLeiDate = cbLeiObs.filter((o) => o.value !== ".").slice(-1)[0]?.date ?? "";
+
+    type Signal = "positive" | "neutral" | "negative";
+
+    const indicators = [
+      {
+        id: "gdp",
+        name: "Real GDP (Annualized)",
+        value: gdpValue,
+        formattedValue: `${gdpValue.toFixed(1)}%`,
+        source: "BEA",
+        frequency: "Quarterly",
+        type: "Lagging" as const,
+        signal: (gdpValue >= 2.5 ? "positive" : gdpValue >= 0 ? "neutral" : "negative") as Signal,
+        date: gdpDate,
+        available: true,
+      },
+      {
+        id: "gdpnow",
+        name: "Atlanta Fed GDPNow",
+        value: gdpNowRes?.value ?? null,
+        formattedValue: gdpNowRes ? `${gdpNowRes.value.toFixed(1)}%` : "N/A",
+        source: "Atlanta Fed",
+        frequency: "Continuous",
+        type: "Real-Time" as const,
+        signal: gdpNowRes
+          ? ((gdpNowRes.value >= 2.5 ? "positive" : gdpNowRes.value >= 0 ? "neutral" : "negative") as Signal)
+          : null,
+        date: gdpNowRes?.date ?? null,
+        available: gdpNowRes !== null,
+        unavailableReason: gdpNowRes ? undefined : "Live fetch unavailable",
+      },
+      {
+        id: "ism_mfg",
+        name: "ISM Manufacturing PMI",
+        value: null,
+        formattedValue: "N/A",
+        source: "ISM",
+        frequency: "Monthly",
+        type: "Leading" as const,
+        signal: null,
+        date: null,
+        available: false,
+        unavailableReason: "Subscription required",
+      },
+      {
+        id: "ism_svc",
+        name: "ISM Services PMI",
+        value: null,
+        formattedValue: "N/A",
+        source: "ISM",
+        frequency: "Monthly",
+        type: "Leading" as const,
+        signal: null,
+        date: null,
+        available: false,
+        unavailableReason: "Subscription required",
+      },
+      {
+        id: "sp_pmi",
+        name: "S&P Global PMI Composite",
+        value: null,
+        formattedValue: "N/A",
+        source: "S&P Global",
+        frequency: "Monthly",
+        type: "Leading" as const,
+        signal: null,
+        date: null,
+        available: false,
+        unavailableReason: "Subscription required",
+      },
+      {
+        id: "cb_lei",
+        name: "Conference Board LEI",
+        value: cbLeiMoM,
+        formattedValue: cbLeiMoM !== null ? `${cbLeiMoM >= 0 ? "+" : ""}${cbLeiMoM.toFixed(2)}` : "N/A",
+        source: "Conference Board",
+        frequency: "Monthly",
+        type: "Leading" as const,
+        signal: cbLeiMoM !== null
+          ? ((cbLeiMoM > 0.3 ? "positive" : cbLeiMoM > -0.1 ? "neutral" : "negative") as Signal)
+          : null,
+        date: cbLeiDate || null,
+        available: cbLeiMoM !== null,
+        unavailableReason: cbLeiMoM !== null ? undefined : "Data unavailable",
+      },
+      {
+        id: "indpro",
+        name: "Industrial Production",
+        value: ipMoM,
+        formattedValue: ipMoM !== null ? `${ipMoM >= 0 ? "+" : ""}${ipMoM.toFixed(2)}%` : "N/A",
+        source: "Federal Reserve",
+        frequency: "Monthly",
+        type: "Coincident" as const,
+        signal: ipMoM !== null
+          ? ((ipMoM > 0.5 ? "positive" : ipMoM > -0.2 ? "neutral" : "negative") as Signal)
+          : null,
+        date: ipDate || null,
+        available: ipMoM !== null,
+        unavailableReason: ipMoM !== null ? undefined : "Data unavailable",
+      },
+      {
+        id: "retail_ex_auto",
+        name: "Retail Sales (ex-auto)",
+        value: retailMoM,
+        formattedValue: retailMoM !== null ? `${retailMoM >= 0 ? "+" : ""}${retailMoM.toFixed(2)}%` : "N/A",
+        source: "Census Bureau",
+        frequency: "Monthly",
+        type: "Coincident" as const,
+        signal: retailMoM !== null
+          ? ((retailMoM > 0.5 ? "positive" : retailMoM > -0.2 ? "neutral" : "negative") as Signal)
+          : null,
+        date: retailDate || null,
+        available: retailMoM !== null,
+        unavailableReason: retailMoM !== null ? undefined : "Data unavailable",
+      },
+      {
+        id: "durable_goods",
+        name: "Durable Goods Orders",
+        value: durableMoM,
+        formattedValue: durableMoM !== null ? `${durableMoM >= 0 ? "+" : ""}${durableMoM.toFixed(2)}%` : "N/A",
+        source: "Census Bureau",
+        frequency: "Monthly",
+        type: "Leading" as const,
+        signal: durableMoM !== null
+          ? ((durableMoM > 1 ? "positive" : durableMoM > -2 ? "neutral" : "negative") as Signal)
+          : null,
+        date: durableDate || null,
+        available: durableMoM !== null,
+        unavailableReason: durableMoM !== null ? undefined : "Data unavailable",
+      },
+      {
+        id: "permits",
+        name: "Building Permits",
+        value: permitsValue,
+        formattedValue: permitsValue !== null ? `${(permitsValue / 1000).toFixed(2)}M` : "N/A",
+        source: "Census Bureau",
+        frequency: "Monthly",
+        type: "Leading" as const,
+        signal: permitsValue !== null
+          ? ((permitsValue > 1400 ? "positive" : permitsValue > 1100 ? "neutral" : "negative") as Signal)
+          : null,
+        date: permitsDate || null,
+        available: permitsValue !== null,
+        unavailableReason: permitsValue !== null ? undefined : "Data unavailable",
+      },
+    ];
+
+    res.json({
+      cyclePhase: { phase, label: cycleLabel, confidence, description: cycleDescription, sliderPosition },
+      indicators,
+      lastRefreshed: new Date().toISOString(),
+    });
   } catch (err) {
     req.log.error({ err }, "Failed to fetch growth tab");
     res.status(500).json({ error: "Failed to fetch growth data" });

@@ -49,12 +49,20 @@ function ActivePage({ tab }: { tab: string }) {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState(() => {
+    const hash = window.location.hash.replace("#", "");
+    return ["overview","growth","inflation","labor","financial","global","investor"].includes(hash) ? hash : "overview";
+  });
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    window.location.hash = tab;
+  };
 
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <DashboardLayout activeTab={activeTab} onTabChange={setActiveTab}>
+        <DashboardLayout activeTab={activeTab} onTabChange={handleTabChange}>
           <Suspense fallback={<PageLoader />}>
             <ActivePage tab={activeTab} />
           </Suspense>
