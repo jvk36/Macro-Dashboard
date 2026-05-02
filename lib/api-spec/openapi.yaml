@@ -3,13 +3,15 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Macro Dashboard API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: macro
+    description: Macroeconomic data endpoints
 paths:
   /healthz:
     get:
@@ -24,6 +26,131 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /macro/overview:
+    get:
+      operationId: getOverview
+      tags: [macro]
+      summary: Get overview dashboard data
+      description: Returns all key readings, signal dashboard, and market cycle data for the Overview tab
+      responses:
+        "200":
+          description: Overview data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OverviewData"
+
+  /macro/series/{seriesId}:
+    get:
+      operationId: getSeriesHistory
+      tags: [macro]
+      summary: Get historical data for a FRED series
+      description: Returns recent historical observations for a given FRED series ID
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 60
+      responses:
+        "200":
+          description: Series history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesHistory"
+
+  /macro/yield-curve:
+    get:
+      operationId: getYieldCurve
+      tags: [macro]
+      summary: Get full yield curve data
+      description: Returns current yield curve across all maturities
+      responses:
+        "200":
+          description: Yield curve data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/YieldCurveData"
+
+  /macro/recession-probability:
+    get:
+      operationId: getRecessionProbability
+      tags: [macro]
+      summary: Get recession probability data
+      description: Returns recession probability from NY Fed model and related indicators
+      responses:
+        "200":
+          description: Recession probability data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecessionProbabilityData"
+
+  /macro/tab/growth:
+    get:
+      operationId: getGrowthTab
+      tags: [macro]
+      summary: Get Growth & Cycle tab data
+      description: Returns GDP, PMI, industrial production, retail sales, and business cycle indicators
+      responses:
+        "200":
+          description: Growth & Cycle data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthTabData"
+
+  /macro/tab/inflation:
+    get:
+      operationId: getInflationTab
+      tags: [macro]
+      summary: Get Inflation tab data
+      description: Returns CPI, PCE, PPI, breakevens, and inflation expectations data
+      responses:
+        "200":
+          description: Inflation data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InflationTabData"
+
+  /macro/tab/labor:
+    get:
+      operationId: getLaborTab
+      tags: [macro]
+      summary: Get Labor Market tab data
+      description: Returns NFP, unemployment, jobless claims, wages, and participation rate data
+      responses:
+        "200":
+          description: Labor market data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaborTabData"
+
+  /macro/tab/financial:
+    get:
+      operationId: getFinancialTab
+      tags: [macro]
+      summary: Get Financial Conditions tab data
+      description: Returns credit spreads, yield curve, Fed balance sheet, and financial conditions index data
+      responses:
+        "200":
+          description: Financial conditions data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTabData"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +161,323 @@ components:
       required:
         - status
 
+    KeyReading:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        value:
+          type: number
+        unit:
+          type: string
+        signal:
+          type: string
+          enum: [positive, neutral, negative, warning]
+        signalLabel:
+          type: string
+        description:
+          type: string
+        lastUpdated:
+          type: string
+        previousValue:
+          type: number
+        change:
+          type: number
+      required:
+        - id
+        - label
+        - value
+        - unit
+        - signal
+        - signalLabel
+        - lastUpdated
+
+    SignalItem:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        value:
+          type: number
+        unit:
+          type: string
+        signal:
+          type: string
+          enum: [positive, neutral, negative, warning]
+        signalLabel:
+          type: string
+        interpretation:
+          type: string
+        detail:
+          type: string
+        lastUpdated:
+          type: string
+      required:
+        - id
+        - label
+        - value
+        - unit
+        - signal
+        - signalLabel
+        - interpretation
+        - lastUpdated
+
+    MarketCyclePhase:
+      type: object
+      properties:
+        phase:
+          type: string
+          enum: [early_expansion, mid_expansion, late_expansion, early_contraction, recession, recovery]
+        label:
+          type: string
+        confidence:
+          type: number
+        description:
+          type: string
+      required:
+        - phase
+        - label
+        - confidence
+        - description
+
+    OverviewData:
+      type: object
+      properties:
+        keyReadings:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyReading"
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalItem"
+        marketCycle:
+          $ref: "#/components/schemas/MarketCyclePhase"
+        lastRefreshed:
+          type: string
+      required:
+        - keyReadings
+        - signals
+        - marketCycle
+        - lastRefreshed
+
+    ObservationPoint:
+      type: object
+      properties:
+        date:
+          type: string
+        value:
+          type: number
+      required:
+        - date
+        - value
+
+    SeriesHistory:
+      type: object
+      properties:
+        seriesId:
+          type: string
+        title:
+          type: string
+        units:
+          type: string
+        frequency:
+          type: string
+        observations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObservationPoint"
+        latestValue:
+          type: number
+        latestDate:
+          type: string
+      required:
+        - seriesId
+        - title
+        - units
+        - frequency
+        - observations
+        - latestValue
+        - latestDate
+
+    YieldCurvePoint:
+      type: object
+      properties:
+        maturity:
+          type: string
+        years:
+          type: number
+        yield:
+          type: number
+      required:
+        - maturity
+        - years
+        - yield
+
+    YieldCurveData:
+      type: object
+      properties:
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/YieldCurvePoint"
+        spread2s10s:
+          type: number
+        spread3m10y:
+          type: number
+        isInverted:
+          type: boolean
+        signal:
+          type: string
+          enum: [positive, neutral, negative, warning]
+        interpretation:
+          type: string
+        asOf:
+          type: string
+      required:
+        - points
+        - spread2s10s
+        - spread3m10y
+        - isInverted
+        - signal
+        - interpretation
+        - asOf
+
+    RecessionProbabilityData:
+      type: object
+      properties:
+        probability:
+          type: number
+        signal:
+          type: string
+          enum: [positive, neutral, negative, warning]
+        model:
+          type: string
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObservationPoint"
+        lastUpdated:
+          type: string
+      required:
+        - probability
+        - signal
+        - model
+        - history
+        - lastUpdated
+
+    GrowthTabData:
+      type: object
+      properties:
+        gdpGrowth:
+          $ref: "#/components/schemas/SeriesHistory"
+        industrialProduction:
+          $ref: "#/components/schemas/SeriesHistory"
+        retailSales:
+          $ref: "#/components/schemas/SeriesHistory"
+        manufacturingPMI:
+          $ref: "#/components/schemas/SeriesHistory"
+        servicesPMI:
+          $ref: "#/components/schemas/SeriesHistory"
+        leadingIndicators:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyReading"
+      required:
+        - gdpGrowth
+        - industrialProduction
+        - retailSales
+        - manufacturingPMI
+        - servicesPMI
+        - leadingIndicators
+
+    InflationTabData:
+      type: object
+      properties:
+        cpi:
+          $ref: "#/components/schemas/SeriesHistory"
+        coreInflation:
+          $ref: "#/components/schemas/SeriesHistory"
+        pce:
+          $ref: "#/components/schemas/SeriesHistory"
+        corePce:
+          $ref: "#/components/schemas/SeriesHistory"
+        ppi:
+          $ref: "#/components/schemas/SeriesHistory"
+        breakevens5y:
+          $ref: "#/components/schemas/SeriesHistory"
+        breakevens10y:
+          $ref: "#/components/schemas/SeriesHistory"
+        keyReadings:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyReading"
+      required:
+        - cpi
+        - coreInflation
+        - pce
+        - corePce
+        - ppi
+        - breakevens5y
+        - breakevens10y
+        - keyReadings
+
+    LaborTabData:
+      type: object
+      properties:
+        nfp:
+          $ref: "#/components/schemas/SeriesHistory"
+        unemploymentRate:
+          $ref: "#/components/schemas/SeriesHistory"
+        participationRate:
+          $ref: "#/components/schemas/SeriesHistory"
+        averageHourlyEarnings:
+          $ref: "#/components/schemas/SeriesHistory"
+        joblessClaimsInitial:
+          $ref: "#/components/schemas/SeriesHistory"
+        jolts:
+          $ref: "#/components/schemas/SeriesHistory"
+        keyReadings:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyReading"
+      required:
+        - nfp
+        - unemploymentRate
+        - participationRate
+        - averageHourlyEarnings
+        - joblessClaimsInitial
+        - jolts
+        - keyReadings
+
+    FinancialTabData:
+      type: object
+      properties:
+        hySpread:
+          $ref: "#/components/schemas/SeriesHistory"
+        igSpread:
+          $ref: "#/components/schemas/SeriesHistory"
+        fedFundsRate:
+          $ref: "#/components/schemas/SeriesHistory"
+        treasury10y:
+          $ref: "#/components/schemas/SeriesHistory"
+        treasury2y:
+          $ref: "#/components/schemas/SeriesHistory"
+        yieldCurve:
+          $ref: "#/components/schemas/YieldCurveData"
+        keyReadings:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyReading"
+      required:
+        - hySpread
+        - igSpread
+        - fedFundsRate
+        - treasury10y
+        - treasury2y
+        - yieldCurve
+        - keyReadings

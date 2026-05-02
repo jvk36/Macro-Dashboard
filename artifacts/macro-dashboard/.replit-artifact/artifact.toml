@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Macro Dashboard"
+version = "1.0.0"
+id = "artifacts/macro-dashboard"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22446
+
+[services.development]
+run = "pnpm --filter @workspace/macro-dashboard run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/macro-dashboard", "run", "build" ]
+publicDir = "artifacts/macro-dashboard/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22446"
+BASE_PATH = "/"
