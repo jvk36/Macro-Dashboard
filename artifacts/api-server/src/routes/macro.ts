@@ -42,6 +42,9 @@ const SERIES = {
   DURABLE_GOODS: "DGORDER",
   BUILDING_PERMITS: "PERMIT",
   CB_LEI: "USSLIND",
+  OECD_MFG_CONF: "BSCICP03USM665S",
+  OECD_CLI: "USALOLITONOSTSAM",
+  CFNAI: "CFNAIMA3",
   BREAKEVEN_5Y: "T5YIE",
   BREAKEVEN_10Y: "T10YIE",
   RECESSION_PROB: "RECPROUSM156N",
@@ -534,6 +537,9 @@ router.get("/macro/tab/growth", async (req, res) => {
       durableRes,
       permitsRes,
       cbLeiRes,
+      oecdMfgRes,
+      cfnaiRes,
+      oecdCliRes,
     ] = await Promise.allSettled([
       getObservations(SERIES.GDP, 5),
       getObservations(SERIES.CPI, 15),
@@ -544,6 +550,9 @@ router.get("/macro/tab/growth", async (req, res) => {
       getObservations(SERIES.DURABLE_GOODS, 4),
       getObservations(SERIES.BUILDING_PERMITS, 4),
       getObservations(SERIES.CB_LEI, 4),
+      getLatestValue(SERIES.OECD_MFG_CONF),
+      getLatestValue(SERIES.CFNAI),
+      getLatestValue(SERIES.OECD_CLI),
     ]);
 
     const gdpNowRes = await getGDPNow();
@@ -626,6 +635,28 @@ router.get("/macro/tab/growth", async (req, res) => {
     const cbLeiMoM = momAbs(cbLeiObs);
     const cbLeiDate = cbLeiObs.filter((o) => o.value !== ".").slice(-1)[0]?.date ?? "";
 
+    // ── PMI proxies ────────────────────────────────────────────────────────────
+    // OECD Mfg Business Confidence → ISM Mfg proxy: centered at 100, range ~97–103
+    // Transform: pmi = 50 + (value − 100) × 1.5
+    const oecdMfg = oecdMfgRes.status === "fulfilled" ? oecdMfgRes.value : null;
+    const ismMfgProxy = oecdMfg
+      ? { value: parseFloat((50 + (oecdMfg.value - 100) * 1.5).toFixed(1)), date: oecdMfg.date }
+      : null;
+
+    // Chicago Fed CFNAI-MA3 → ISM Services proxy: centered at 0, range ~−3 to +1
+    // Transform: pmi = 50 + value × 3
+    const cfnai = cfnaiRes.status === "fulfilled" ? cfnaiRes.value : null;
+    const ismSvcProxy = cfnai
+      ? { value: parseFloat((50 + cfnai.value * 3).toFixed(1)), date: cfnai.date }
+      : null;
+
+    // OECD Composite Leading Indicator → S&P Global Composite proxy
+    // Transform: pmi = 50 + (value − 100) × 1.5
+    const oecdCli = oecdCliRes.status === "fulfilled" ? oecdCliRes.value : null;
+    const spPmiProxy = oecdCli
+      ? { value: parseFloat((50 + (oecdCli.value - 100) * 1.5).toFixed(1)), date: oecdCli.date }
+      : null;
+
     type Signal = "positive" | "neutral" | "negative";
 
     const indicators = [
@@ -659,41 +690,53 @@ router.get("/macro/tab/growth", async (req, res) => {
       {
         id: "ism_mfg",
         name: "ISM Manufacturing PMI",
-        value: null,
-        formattedValue: "N/A",
-        source: "ISM",
+        value: ismMfgProxy?.value ?? null,
+        formattedValue: ismMfgProxy ? `~${ismMfgProxy.value.toFixed(1)}` : "N/A",
+        source: "OECD proxy",
         frequency: "Monthly",
         type: "Leading" as const,
-        signal: null,
-        date: null,
-        available: false,
-        unavailableReason: "Subscription required",
+        signal: ismMfgProxy
+          ? ((ismMfgProxy.value > 52 ? "positive" : ismMfgProxy.value > 48 ? "neutral" : "negative") as Signal)
+          : null,
+        date: ismMfgProxy?.date ?? null,
+        available: ismMfgProxy !== null,
+        isProxy: true,
+        proxySource: "OECD Mfg Business Confidence (BSCICP03USM665S)",
+        unavailableReason: ismMfgProxy ? undefined : "No free proxy available",
       },
       {
         id: "ism_svc",
         name: "ISM Services PMI",
-        value: null,
-        formattedValue: "N/A",
-        source: "ISM",
+        value: ismSvcProxy?.value ?? null,
+        formattedValue: ismSvcProxy ? `~${ismSvcProxy.value.toFixed(1)}` : "N/A",
+        source: "Chicago Fed proxy",
         frequency: "Monthly",
         type: "Leading" as const,
-        signal: null,
-        date: null,
-        available: false,
-        unavailableReason: "Subscription required",
+        signal: ismSvcProxy
+          ? ((ismSvcProxy.value > 52 ? "positive" : ismSvcProxy.value > 48 ? "neutral" : "negative") as Signal)
+          : null,
+        date: ismSvcProxy?.date ?? null,
+        available: ismSvcProxy !== null,
+        isProxy: true,
+        proxySource: "Chicago Fed CFNAI-MA3 (CFNAIMA3)",
+        unavailableReason: ismSvcProxy ? undefined : "No free proxy available",
       },
       {
         id: "sp_pmi",
         name: "S&P Global PMI Composite",
-        value: null,
-        formattedValue: "N/A",
-        source: "S&P Global",
+        value: spPmiProxy?.value ?? null,
+        formattedValue: spPmiProxy ? `~${spPmiProxy.value.toFixed(1)}` : "N/A",
+        source: "OECD proxy",
         frequency: "Monthly",
         type: "Leading" as const,
-        signal: null,
-        date: null,
-        available: false,
-        unavailableReason: "Subscription required",
+        signal: spPmiProxy
+          ? ((spPmiProxy.value > 52 ? "positive" : spPmiProxy.value > 48 ? "neutral" : "negative") as Signal)
+          : null,
+        date: spPmiProxy?.date ?? null,
+        available: spPmiProxy !== null,
+        isProxy: true,
+        proxySource: "OECD Composite Leading Indicator (USALOLITONOSTSAM)",
+        unavailableReason: spPmiProxy ? undefined : "No free proxy available",
       },
       {
         id: "cb_lei",

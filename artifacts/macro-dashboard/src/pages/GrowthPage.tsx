@@ -17,6 +17,8 @@ interface Indicator {
   signal: Signal | null;
   date: string | null;
   available: boolean;
+  isProxy?: boolean;
+  proxySource?: string;
   unavailableReason?: string;
 }
 
@@ -186,19 +188,29 @@ function IndicatorsTable({ indicators }: { indicators: Indicator[] }) {
           <div className="text-right">
             {ind.available ? (
               <div>
-                <span
-                  className="text-sm font-bold tabular-nums"
-                  style={{
-                    color:
-                      ind.signal === "positive" ? "#34d399"
-                      : ind.signal === "negative" ? "#f87171"
-                      : "#93c5fd",
-                  }}
-                >
-                  {ind.formattedValue}
-                </span>
+                <div className="flex items-center justify-end gap-1.5">
+                  <span
+                    className="text-sm font-bold tabular-nums"
+                    style={{
+                      color:
+                        ind.signal === "positive" ? "#34d399"
+                        : ind.signal === "negative" ? "#f87171"
+                        : "#93c5fd",
+                    }}
+                  >
+                    {ind.formattedValue}
+                  </span>
+                  {ind.isProxy && (
+                    <span className="text-[9px] font-semibold px-1 py-0.5 rounded border border-zinc-700 text-zinc-500 uppercase tracking-wide leading-none">
+                      est.
+                    </span>
+                  )}
+                </div>
                 {ind.date && (
                   <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(ind.date)}</div>
+                )}
+                {ind.isProxy && ind.proxySource && (
+                  <div className="text-[10px] text-zinc-700 mt-0.5 leading-tight">{ind.proxySource}</div>
                 )}
               </div>
             ) : (
