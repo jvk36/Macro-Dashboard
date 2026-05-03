@@ -1131,38 +1131,206 @@ router.get("/macro/tab/labor", async (req, res) => {
 
 router.get("/macro/tab/financial", async (req, res) => {
   try {
-    const [hySpread, igSpread, fedFundsRate, treasury10y, treasury2y] = await Promise.all([
-      buildSeriesHistory(SERIES.HY_SPREAD, 60),
-      buildSeriesHistory(SERIES.IG_SPREAD, 60),
-      buildSeriesHistory(SERIES.FED_FUNDS, 60),
-      buildSeriesHistory(SERIES.T10Y, 60),
-      buildSeriesHistory(SERIES.T2Y, 60),
+    const [
+      ffRes, t2yRes, t10yRes, spreadRes,
+      mortgageRes, hyRes, igRes, nfciRes,
+      vixRes, tedRes, dxyRes, wtiRes, m2Res,
+    ] = await Promise.allSettled([
+      getLatestValue(SERIES.FED_FUNDS),
+      getLatestValue(SERIES.T2Y),
+      getLatestValue(SERIES.T10Y),
+      getLatestValue(SERIES.T10Y2Y),
+      getLatestValue("MORTGAGE30US"),
+      getLatestValue(SERIES.HY_SPREAD),
+      getLatestValue(SERIES.IG_SPREAD),
+      getLatestValue("NFCI"),
+      getLatestValue("VIXCLS"),
+      getLatestValue("TEDRATE"),
+      getLatestValue("DTWEXBGS"),
+      getLatestValue("DCOILWTICO"),
+      getObservations("M2SL", 14),
     ]);
 
-    const maturities = [
-      { maturity: "3M", years: 0.25, seriesId: SERIES.T3M },
-      { maturity: "1Y", years: 1, seriesId: SERIES.T1Y },
-      { maturity: "2Y", years: 2, seriesId: SERIES.T2Y },
-      { maturity: "5Y", years: 5, seriesId: SERIES.T5Y },
-      { maturity: "10Y", years: 10, seriesId: SERIES.T10Y },
-      { maturity: "30Y", years: 30, seriesId: SERIES.T30Y },
-    ];
-    const [t10y2y, t10y3m, ...matVals] = await Promise.all([
-      getLatestValue(SERIES.T10Y2Y),
-      getLatestValue(SERIES.T10Y3M),
-      ...maturities.map((m) => getLatestValue(m.seriesId)),
-    ]);
-    const spread2s10s = t10y2y.value * 100;
-    const yieldCurve = {
-      points: maturities.map((m, i) => ({ maturity: m.maturity, years: m.years, yield: matVals[i].value })),
-      spread2s10s,
-      spread3m10y: t10y3m.value * 100,
-      isInverted: spread2s10s < 0,
-      signal: (spread2s10s >= 50 ? "positive" : spread2s10s >= 0 ? "neutral" : spread2s10s >= -50 ? "warning" : "negative") as "positive" | "neutral" | "negative" | "warning",
-      interpretation: spread2s10s < 0 ? "Yield curve inverted" : "Yield curve normal",
-      asOf: t10y2y.date,
+    type FinSig = "positive" | "neutral" | "warning" | "negative";
+
+    function lv(r: PromiseSettledResult<{ value: number; date: string }>): { value: number; date: string } | null {
+      return r.status === "fulfilled" ? r.value : null;
+    }
+
+    // YoY for M2
+    function m2YoY(r: PromiseSettledResult<{ value: string; date: string }[]>): { value: number; date: string } | null {
+      if (r.status !== "fulfilled") return null;
+      const obs = r.value.filter((o) => o.value !== ".");
+      if (obs.length < 13) return null;
+      const latest  = parseFloat(obs[obs.length - 1].value);
+      const yearAgo = parseFloat(obs[obs.length - 13].value);
+      if (!isFinite(latest) || !isFinite(yearAgo) || yearAgo === 0) return null;
+      return { value: ((latest - yearAgo) / Math.abs(yearAgo)) * 100, date: obs[obs.length - 1].date };
+    }
+
+    const ff      = lv(ffRes);
+    const t2y     = lv(t2yRes);
+    const t10y    = lv(t10yRes);
+    const spread  = lv(spreadRes);   // in %, multiply ×100 for bps
+    const mortgage = lv(mortgageRes);
+    const hy      = lv(hyRes);
+    const ig      = lv(igRes);
+    const nfci    = lv(nfciRes);
+    const vix     = lv(vixRes);
+    const ted     = lv(tedRes);
+    const dxy     = lv(dxyRes);
+    const wti     = lv(wtiRes);
+    const m2      = m2YoY(m2Res);
+
+    const spreadBps = spread ? spread.value * 100 : null;
+    // HY/IG OAS series are in percent on FRED — convert to bps
+    const hyBps  = hy  ? { value: hy.value  * 100, date: hy.date  } : null;
+    const igBps  = ig  ? { value: ig.value  * 100, date: ig.date  } : null;
+
+    // ── Signal functions ──────────────────────────────────────────────────
+    function ffSig(v: number): { signal: FinSig; status: string; context: string } {
+      if (v <= 2.0) return { signal: "positive", status: "Accommodative",  context: "Below neutral; supportive of growth and risk assets" };
+      if (v <= 3.5) return { signal: "neutral",  status: "Neutral",        context: "Near neutral; neither stimulative nor restrictive" };
+      if (v <= 5.25) return { signal: "warning", status: "Restrictive",    context: "Above neutral; applying brakes to inflation and growth" };
+      return            { signal: "negative", status: "Very Restrictive",  context: "Well above neutral; significant drag on credit and growth" };
+    }
+    function t2ySig(v: number, ff_: number | null): { signal: FinSig; status: string; context: string } {
+      const below = ff_ !== null && v < ff_ - 0.25;
+      const above = ff_ !== null && v > ff_ + 0.25;
+      if (below) return { signal: "positive", status: "Pricing Rate Cuts",  context: "2Y below Fed Funds — market expects policy easing ahead" };
+      if (above) return { signal: "warning",  status: "Pricing Rate Hikes", context: "2Y above Fed Funds — market expects further tightening" };
+      return            { signal: "neutral",  status: "Rates On Hold",      context: "2Y near Fed Funds — market sees rates stable near-term" };
+    }
+    function t10ySig(v: number): { signal: FinSig; status: string; context: string } {
+      if (v < 3.0)  return { signal: "positive", status: "Low",      context: "Below long-run neutral; very supportive for equities and housing" };
+      if (v < 4.0)  return { signal: "neutral",  status: "Moderate", context: "Near long-run neutral; modest competition with equity valuations" };
+      if (v < 5.0)  return { signal: "warning",  status: "Elevated", context: "Elevated; pressure on equity multiples, housing, and corporate debt" };
+      return            { signal: "negative", status: "High",      context: "High by recent standards; significant drag on rate-sensitive assets" };
+    }
+    function spreadSig(bps: number): { signal: FinSig; status: string; context: string } {
+      if (bps > 75)  return { signal: "positive", status: "Steep Curve",     context: "Normal upward slope; banks earn spread, credit flows freely" };
+      if (bps > 10)  return { signal: "neutral",  status: "Flat / Normal",   context: "Low term premium; monitor for continued flattening" };
+      if (bps >= -25) return { signal: "warning", status: "Mildly Inverted", context: "Mild inversion; historically precedes economic slowdown" };
+      return             { signal: "negative", status: "Inverted",           context: "Sustained inversion; historically leads recession by 12–24 months" };
+    }
+    function hySig(v: number): { signal: FinSig; status: string } {
+      if (v < 300)  return { signal: "positive", status: "Very Tight" };
+      if (v < 450)  return { signal: "positive", status: "Tight" };
+      if (v < 650)  return { signal: "neutral",  status: "Normal" };
+      if (v < 900)  return { signal: "warning",  status: "Wide / Risk-Off" };
+      return           { signal: "negative", status: "Distressed" };
+    }
+    function igSig(v: number): { signal: FinSig; status: string } {
+      if (v < 80)   return { signal: "positive", status: "Very Tight" };
+      if (v < 120)  return { signal: "positive", status: "Tight" };
+      if (v < 180)  return { signal: "neutral",  status: "Normal" };
+      if (v < 250)  return { signal: "warning",  status: "Wide" };
+      return           { signal: "negative", status: "Very Wide" };
+    }
+    function mortgageSig(v: number): { signal: FinSig; status: string } {
+      if (v < 5.0)  return { signal: "positive", status: "Low / Supportive" };
+      if (v < 6.5)  return { signal: "neutral",  status: "Moderate" };
+      if (v < 8.0)  return { signal: "warning",  status: "Elevated" };
+      return           { signal: "negative", status: "High / Restrictive" };
+    }
+    function nfciSig(v: number): { signal: FinSig; status: string } {
+      if (v < -0.5)  return { signal: "positive", status: "Very Loose" };
+      if (v < 0)     return { signal: "positive", status: "Loose" };
+      if (v < 0.3)   return { signal: "neutral",  status: "Neutral" };
+      if (v < 0.7)   return { signal: "warning",  status: "Tight" };
+      return            { signal: "negative", status: "Very Tight" };
+    }
+    function vixSig(v: number): { signal: FinSig; status: string } {
+      if (v < 15)   return { signal: "positive", status: "Complacency" };
+      if (v < 20)   return { signal: "neutral",  status: "Normal" };
+      if (v < 30)   return { signal: "warning",  status: "Elevated" };
+      return           { signal: "negative", status: "Fear" };
+    }
+    function dxySig(v: number): { signal: FinSig; status: string } {
+      if (v < 108)  return { signal: "positive", status: "Weak USD" };
+      if (v < 118)  return { signal: "neutral",  status: "Normal Range" };
+      if (v < 128)  return { signal: "warning",  status: "Strong USD" };
+      return           { signal: "negative", status: "Very Strong USD" };
+    }
+    function wtiSig(v: number): { signal: FinSig; status: string } {
+      if (v < 50)   return { signal: "positive", status: "Low" };
+      if (v < 80)   return { signal: "neutral",  status: "Moderate" };
+      if (v < 100)  return { signal: "warning",  status: "Elevated" };
+      return           { signal: "negative", status: "High" };
+    }
+    function m2Sig(v: number): { signal: FinSig; status: string } {
+      if (v < 0)    return { signal: "negative", status: "Contracting" };
+      if (v < 4)    return { signal: "positive", status: "Modest Growth" };
+      if (v < 8)    return { signal: "neutral",  status: "Healthy Growth" };
+      return           { signal: "warning",  status: "Rapid Expansion" };
+    }
+    function tedSig(v: number): { signal: FinSig; status: string } {
+      if (v < 0.30)  return { signal: "positive", status: "Low / Normal" };
+      if (v < 0.60)  return { signal: "neutral",  status: "Moderate" };
+      if (v < 1.00)  return { signal: "warning",  status: "Elevated" };
+      return            { signal: "negative", status: "High / Stress" };
+    }
+
+    const WATCH: Record<string, string> = {
+      ff:       "The FOMC's primary policy tool. Moves in 25bp increments; watch Fed meeting statements and dot-plot projections for the rate path.",
+      spread:   "Sustained inversion historically precedes recessions by 12–24 months. Re-steepening after inversion can signal early-cycle turn.",
+      mortgage: "Directly impacts housing affordability. Tracks 10Y Treasury + mortgage-backed security spread; key for real estate and consumer spending.",
+      hy:       "Risk appetite barometer. Sub-400bps historically tight; >700bps signals stress. Widens sharply during credit events.",
+      ig:       "Blue-chip corporate funding costs. Wider spreads raise capex hurdle rates and signal tightening credit standards.",
+      nfci:     "Composite of 105 measures across risk, credit, and leverage. Positive = tighter than avg; negative = looser. Sustained tightening pressures growth.",
+      goldman:  "Goldman's proprietary blend of rates, credit, equity, and FX conditions. Not available on FRED; requires Bloomberg/GS data subscription.",
+      vix:      "<15 = complacency; 15–25 = normal; >30 = fear. Sustained low VIX supports carry strategies; spikes often mark equity lows.",
+      ted:      "Interbank stress indicator (LIBOR minus T-bill). Discontinued Apr 2023 when LIBOR was replaced by SOFR — final reading shown.",
+      dxy:      "Broad USD strength. Strong USD tightens global financial conditions, pressures EM debt, weakens commodity prices, and headwinds US multinationals.",
+      wti:      "Key inflation input and demand proxy. Rising oil boosts CPI and energy sector; falling oil signals demand weakness or supply glut.",
+      m2:       "Broad money stock growth. Rapid M2 expansion risks future inflation; contraction historically associated with credit stress and slowdowns.",
     };
-    res.json({ hySpread, igSpread, fedFundsRate, treasury10y, treasury2y, yieldCurve, keyReadings: [] });
+
+    function suiteRow(id: string, name: string, data: { value: number; date: string } | null, source: string, fmt: (v: number) => string, sig: (v: number) => { signal: FinSig; status: string }, extra?: object) {
+      const watch = WATCH[id] ?? "";
+      if (!data) return { id, name, value: null, formattedValue: "N/A", source, signal: null, status: null, date: null, available: false, whyItMatters: watch, ...extra };
+      const { signal, status } = sig(data.value);
+      return { id, name, value: data.value, formattedValue: fmt(data.value), source, signal, status, date: data.date, available: true, whyItMatters: watch, ...extra };
+    }
+
+    const fmtPct  = (v: number) => `${v.toFixed(2)}%`;
+    const fmtBps  = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}bps`;
+    const fmtOas  = (v: number) => `${v.toFixed(0)} bps`;
+    const fmtUsd  = (v: number) => v.toFixed(1);
+    const fmtWti  = (v: number) => `$${v.toFixed(1)}`;
+    const fmtYoY  = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+
+    // Section A — 4 key rate cards
+    const ffCard     = ff     ? { value: ff.value,         date: ff.date,     formattedValue: fmtPct(ff.value),     ...ffSig(ff.value) }    : null;
+    const t2yCard    = t2y    ? { value: t2y.value,        date: t2y.date,    formattedValue: fmtPct(t2y.value),    ...t2ySig(t2y.value, ff?.value ?? null) } : null;
+    const t10yCard   = t10y   ? { value: t10y.value,       date: t10y.date,   formattedValue: fmtPct(t10y.value),   ...t10ySig(t10y.value) } : null;
+    const spreadCard = spreadBps !== null && spread ? {
+      value: spreadBps, date: spread.date,
+      formattedValue: fmtBps(spreadBps),
+      ...spreadSig(spreadBps),
+    } : null;
+
+    // Section B — 12 suite rows
+    const spreadForRow = spreadBps !== null && spread ? { value: spreadBps, date: spread.date } : null;
+
+    res.json({
+      rates: { ff: ffCard, t2y: t2yCard, t10y: t10yCard, spread: spreadCard },
+      suite: [
+        suiteRow("ff",       "Federal Funds Rate",        ff,          "FOMC",       fmtPct,  ffSig),
+        suiteRow("spread",   "2Y–10Y Yield Spread",       spreadForRow,"FRED",       fmtBps,  spreadSig),
+        suiteRow("mortgage", "30Y Mortgage Rate",         mortgage,    "Freddie Mac",fmtPct,  mortgageSig),
+        suiteRow("hy",       "HY Credit Spread (OAS)",    hyBps,       "ICE BofA",   fmtOas,  hySig),
+        suiteRow("ig",       "IG Credit Spread (OAS)",    igBps,       "ICE BofA",   fmtOas,  igSig),
+        suiteRow("nfci",     "Chicago Fed NFCI",          nfci,        "Chicago Fed",fmtUsd,  nfciSig),
+        { id: "goldman", name: "Goldman FCI Index", value: null, formattedValue: "N/A", source: "Goldman Sachs", signal: null, status: null, date: null, available: false, whyItMatters: WATCH.goldman, unavailableReason: "Not on FRED free tier" },
+        suiteRow("vix",      "VIX (Implied Volatility)",  vix,         "CBOE",       fmtUsd,  vixSig),
+        suiteRow("ted",      "TED Spread",                ted,         "BBA/FRED",   fmtPct,  tedSig, { note: "Discontinued Apr 2023" }),
+        suiteRow("dxy",      "USD Index (Broad)",         dxy,         "Fed",        fmtUsd,  dxySig),
+        suiteRow("wti",      "WTI Crude Oil",             wti,         "EIA",        fmtWti,  wtiSig),
+        suiteRow("m2",       "M2 Money Supply (YoY)",     m2,          "Fed",        fmtYoY,  m2Sig),
+      ],
+      lastRefreshed: new Date().toISOString(),
+    });
   } catch (err) {
     req.log.error({ err }, "Failed to fetch financial tab");
     res.status(500).json({ error: "Failed to fetch financial data" });
