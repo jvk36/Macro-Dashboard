@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { useHistoryModal } from "@/context/HistoryModalContext";
+import { getSeriesId } from "@/lib/seriesIds";
 
 type FinSig = "positive" | "neutral" | "warning" | "negative" | null;
 
@@ -68,15 +70,18 @@ function SignalDot({ signal }: { signal: FinSig }) {
 }
 
 // ─── Section A Card ───────────────────────────────────────────────────────────
-const CARD_META: Record<string, { subtitle: string }> = {
-  ff:     { subtitle: "Fed Funds Rate" },
-  t2y:    { subtitle: "2Y Treasury Yield" },
-  t10y:   { subtitle: "10Y Treasury Yield" },
-  spread: { subtitle: "2s10s Yield Spread" },
+const CARD_META: Record<string, { subtitle: string; seriesLabel: string }> = {
+  ff:     { subtitle: "Fed Funds Rate",    seriesLabel: "Federal Funds Rate" },
+  t2y:    { subtitle: "2Y Treasury Yield", seriesLabel: "2-Year Treasury Yield" },
+  t10y:   { subtitle: "10Y Treasury Yield",seriesLabel: "10-Year Treasury Yield" },
+  spread: { subtitle: "2s10s Yield Spread",seriesLabel: "10Y-2Y Treasury Spread" },
 };
 
 function RateCardView({ id, card }: { id: string; card: RateCard | null }) {
+  const { open } = useHistoryModal();
   const meta = CARD_META[id];
+  const seriesId = getSeriesId(id);
+
   if (!card) {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 flex flex-col gap-3">
@@ -86,7 +91,10 @@ function RateCardView({ id, card }: { id: string; card: RateCard | null }) {
     );
   }
   return (
-    <div className={`rounded-xl border bg-zinc-900 p-5 flex flex-col gap-3 ${sigBorder(card.signal)}`}>
+    <div
+      onClick={seriesId ? () => open(seriesId, meta.seriesLabel) : undefined}
+      className={`rounded-xl border bg-zinc-900 p-5 flex flex-col gap-3 ${sigBorder(card.signal)} ${seriesId ? "cursor-pointer hover:bg-zinc-800/40 transition-colors" : ""}`}
+    >
       <div className="text-xs font-semibold text-zinc-400">{meta.subtitle}</div>
       <div className="flex items-end justify-between gap-2">
         <div>
@@ -108,6 +116,7 @@ function RateCardView({ id, card }: { id: string; card: RateCard | null }) {
 
 // ─── Section B Table ──────────────────────────────────────────────────────────
 function SuiteTable({ rows }: { rows: SuiteRow[] }) {
+  const { open } = useHistoryModal();
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
       <div className="grid grid-cols-[2.2fr_1fr_1fr_0.9fr_2.8fr] gap-x-3 px-4 py-2.5 border-b border-zinc-800 bg-zinc-950">
@@ -118,55 +127,59 @@ function SuiteTable({ rows }: { rows: SuiteRow[] }) {
         <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">What to Watch</span>
       </div>
 
-      {rows.map((row, idx) => (
-        <div
-          key={row.id}
-          className={`grid grid-cols-[2.2fr_1fr_1fr_0.9fr_2.8fr] gap-x-3 px-4 py-3 items-start ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors`}
-        >
-          {/* Name */}
-          <div className="flex items-center gap-2.5 pt-0.5">
-            <SignalDot signal={row.signal} />
-            <div>
-              <span className="text-sm font-medium text-zinc-200">{row.name}</span>
-              {row.note && (
-                <span className="ml-2 text-[10px] text-zinc-600">{row.note}</span>
+      {rows.map((row, idx) => {
+        const seriesId = getSeriesId(row.id);
+        return (
+          <div
+            key={row.id}
+            onClick={seriesId && row.available ? () => open(seriesId, row.name) : undefined}
+            className={`grid grid-cols-[2.2fr_1fr_1fr_0.9fr_2.8fr] gap-x-3 px-4 py-3 items-start ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors ${seriesId && row.available ? "cursor-pointer" : ""}`}
+          >
+            {/* Name */}
+            <div className="flex items-center gap-2.5 pt-0.5">
+              <SignalDot signal={row.signal} />
+              <div>
+                <span className="text-sm font-medium text-zinc-200">{row.name}</span>
+                {row.note && (
+                  <span className="ml-2 text-[10px] text-zinc-600">{row.note}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Value */}
+            <div className="text-right">
+              {row.available ? (
+                <div>
+                  <span className={`text-sm font-bold tabular-nums ${sigText(row.signal)}`}>
+                    {row.formattedValue}
+                  </span>
+                  {row.date && (
+                    <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(row.date)}</div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <span className="text-xs text-zinc-600">—</span>
+                  {row.unavailableReason && (
+                    <div className="text-[10px] text-zinc-700 mt-0.5">{row.unavailableReason}</div>
+                  )}
+                </div>
               )}
             </div>
+
+            {/* Source */}
+            <div className="text-xs text-zinc-400 pt-0.5">{row.source}</div>
+
+            {/* Signal badge */}
+            <div className="pt-0.5">
+              <StatusBadge signal={row.signal} status={row.status} />
+            </div>
+
+            {/* What to Watch */}
+            <div className="text-xs text-zinc-500 leading-relaxed">{row.whyItMatters}</div>
           </div>
-
-          {/* Value */}
-          <div className="text-right">
-            {row.available ? (
-              <div>
-                <span className={`text-sm font-bold tabular-nums ${sigText(row.signal)}`}>
-                  {row.formattedValue}
-                </span>
-                {row.date && (
-                  <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(row.date)}</div>
-                )}
-              </div>
-            ) : (
-              <div>
-                <span className="text-xs text-zinc-600">—</span>
-                {row.unavailableReason && (
-                  <div className="text-[10px] text-zinc-700 mt-0.5">{row.unavailableReason}</div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Source */}
-          <div className="text-xs text-zinc-400 pt-0.5">{row.source}</div>
-
-          {/* Signal badge */}
-          <div className="pt-0.5">
-            <StatusBadge signal={row.signal} status={row.status} />
-          </div>
-
-          {/* What to Watch */}
-          <div className="text-xs text-zinc-500 leading-relaxed">{row.whyItMatters}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -233,7 +246,7 @@ export default function FinancialPage() {
       {/* Section A */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          A · Fed &amp; Interest Rates
+          A · Fed &amp; Interest Rates · <span className="normal-case font-normal text-zinc-600">click a card to view history</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <RateCardView id="ff"     card={data.rates.ff}     />
@@ -246,7 +259,7 @@ export default function FinancialPage() {
       {/* Section B */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          B · Financial Conditions Indicators
+          B · Financial Conditions Indicators · <span className="normal-case font-normal text-zinc-600">click a row to view history</span>
         </div>
         <SuiteTable rows={data.suite} />
       </div>

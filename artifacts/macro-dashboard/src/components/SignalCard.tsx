@@ -1,5 +1,7 @@
 import { cn, formatDate } from "@/lib/utils";
 import { SignalDot, SignalBadge } from "./SignalDot";
+import { useHistoryModal } from "@/context/HistoryModalContext";
+import { getSeriesId } from "@/lib/seriesIds";
 
 type Signal = "positive" | "neutral" | "negative" | "warning";
 
@@ -30,7 +32,10 @@ const signalBgMap: Record<Signal, string> = {
   negative: "bg-red-500/5",
 };
 
-export function SignalCard({ label, value, unit, signal, signalLabel, interpretation, detail, lastUpdated, isLoading }: SignalCardProps) {
+export function SignalCard({ id, label, value, unit, signal, signalLabel, interpretation, detail, lastUpdated, isLoading }: SignalCardProps) {
+  const { open } = useHistoryModal();
+  const seriesId = getSeriesId(id);
+
   if (isLoading) {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 border-l-4 border-l-zinc-700">
@@ -47,11 +52,13 @@ export function SignalCard({ label, value, unit, signal, signalLabel, interpreta
 
   return (
     <div
+      onClick={seriesId ? () => open(seriesId, label) : undefined}
       className={cn(
         "rounded-xl border border-zinc-800 p-5 border-l-4 transition-all hover:border-zinc-700",
         signalBorderMap[signal],
         signalBgMap[signal],
         "bg-zinc-900",
+        seriesId ? "cursor-pointer" : "",
       )}
     >
       <div className="flex items-center justify-between mb-3">

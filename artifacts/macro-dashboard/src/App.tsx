@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { HistoryModalProvider } from "@/context/HistoryModalContext";
+import { HistoryModal } from "@/components/HistoryModal";
 import { BarChart2 } from "lucide-react";
 
 const OverviewPage    = lazy(() => import("@/pages/OverviewPage"));
@@ -62,11 +64,14 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <DashboardLayout activeTab={activeTab} onTabChange={handleTabChange}>
-          <Suspense fallback={<PageLoader />}>
-            <ActivePage tab={activeTab} />
-          </Suspense>
-        </DashboardLayout>
+        <HistoryModalProvider>
+          <DashboardLayout activeTab={activeTab} onTabChange={handleTabChange}>
+            <Suspense fallback={<PageLoader />}>
+              <ActivePage tab={activeTab} />
+            </Suspense>
+          </DashboardLayout>
+          <HistoryModal />
+        </HistoryModalProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

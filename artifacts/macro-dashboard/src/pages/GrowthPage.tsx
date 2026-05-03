@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { useHistoryModal } from "@/context/HistoryModalContext";
+import { getSeriesId } from "@/lib/seriesIds";
 
 type Signal = "positive" | "neutral" | "negative";
 type CyclePhase = "early_expansion" | "mid_expansion" | "late_expansion" | "recession";
@@ -100,45 +102,24 @@ function CyclePhaseIndicator({ cycle }: { cycle: GrowthTabData["cyclePhase"] }) 
 
       {/* Scale bar */}
       <div className="relative mb-2 select-none">
-        {/* Segment strips */}
         <div className="flex h-5 rounded-lg overflow-hidden gap-px">
           {PHASES.map((p) => (
-            <div
-              key={p.key}
-              className="flex-1 opacity-60"
-              style={{ backgroundColor: p.color }}
-            />
+            <div key={p.key} className="flex-1 opacity-60" style={{ backgroundColor: p.color }} />
           ))}
         </div>
-
-        {/* Marker triangle */}
-        <div
-          className="absolute -top-1 transition-all duration-700"
-          style={{ left: `calc(${pos}% - 6px)` }}
-        >
+        <div className="absolute -top-1 transition-all duration-700" style={{ left: `calc(${pos}% - 6px)` }}>
           <svg width="12" height="10" viewBox="0 0 12 10" fill="none">
             <polygon points="6,9 0,0 12,0" fill="white" />
           </svg>
         </div>
-
-        {/* Marker pin line */}
-        <div
-          className="absolute top-0 w-0.5 h-5 bg-white/80 transition-all duration-700"
-          style={{ left: `${pos}%` }}
-        />
+        <div className="absolute top-0 w-0.5 h-5 bg-white/80 transition-all duration-700" style={{ left: `${pos}%` }} />
       </div>
 
       {/* Phase segment labels */}
       <div className="flex mb-4">
         {PHASES.map((p) => (
-          <div
-            key={p.key}
-            className="flex-1 pt-2 text-center"
-          >
-            <div
-              className="text-xs font-semibold leading-tight"
-              style={{ color: cycle.phase === p.key ? p.color : "#71717a" }}
-            >
+          <div key={p.key} className="flex-1 pt-2 text-center">
+            <div className="text-xs font-semibold leading-tight" style={{ color: cycle.phase === p.key ? p.color : "#71717a" }}>
               {p.label}
             </div>
             <div className="text-[10px] text-zinc-600 mt-0.5">{p.pct}</div>
@@ -159,6 +140,7 @@ function CyclePhaseIndicator({ cycle }: { cycle: GrowthTabData["cyclePhase"] }) 
 
 // ─── Section B: Indicators Table ─────────────────────────────────────────────
 function IndicatorsTable({ indicators }: { indicators: Indicator[] }) {
+  const { open } = useHistoryModal();
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
       {/* Table header */}
@@ -171,70 +153,76 @@ function IndicatorsTable({ indicators }: { indicators: Indicator[] }) {
       </div>
 
       {/* Rows */}
-      {indicators.map((ind, idx) => (
-        <div
-          key={ind.id}
-          className={`grid grid-cols-[2fr_1fr_1fr_1fr_1.2fr] gap-x-3 px-4 py-3 items-center ${
-            idx < indicators.length - 1 ? "border-b border-zinc-800/60" : ""
-          } hover:bg-zinc-800/30 transition-colors`}
-        >
-          {/* Name + signal */}
-          <div className="flex items-center gap-2.5 min-w-0">
-            <SignalDot signal={ind.signal} />
-            <span className="text-sm font-medium text-zinc-200 truncate">{ind.name}</span>
-          </div>
+      {indicators.map((ind, idx) => {
+        const seriesId = getSeriesId(ind.id);
+        return (
+          <div
+            key={ind.id}
+            onClick={seriesId && ind.available ? () => open(seriesId, ind.name) : undefined}
+            className={`grid grid-cols-[2fr_1fr_1fr_1fr_1.2fr] gap-x-3 px-4 py-3 items-center ${
+              idx < indicators.length - 1 ? "border-b border-zinc-800/60" : ""
+            } hover:bg-zinc-800/30 transition-colors ${seriesId && ind.available ? "cursor-pointer" : ""}`}
+          >
+            {/* Name + signal */}
+            <div className="flex items-center gap-2.5 min-w-0">
+              <SignalDot signal={ind.signal} />
+              <div className="min-w-0">
+                <span className="text-sm font-medium text-zinc-200 truncate block">{ind.name}</span>
+              </div>
+            </div>
 
-          {/* Value */}
-          <div className="text-right">
-            {ind.available ? (
-              <div>
-                <div className="flex items-center justify-end gap-1.5">
-                  <span
-                    className="text-sm font-bold tabular-nums"
-                    style={{
-                      color:
-                        ind.signal === "positive" ? "#34d399"
-                        : ind.signal === "negative" ? "#f87171"
-                        : "#93c5fd",
-                    }}
-                  >
-                    {ind.formattedValue}
-                  </span>
-                  {ind.isProxy && (
-                    <span className="text-[9px] font-semibold px-1 py-0.5 rounded border border-zinc-700 text-zinc-500 uppercase tracking-wide leading-none">
-                      est.
+            {/* Value */}
+            <div className="text-right">
+              {ind.available ? (
+                <div>
+                  <div className="flex items-center justify-end gap-1.5">
+                    <span
+                      className="text-sm font-bold tabular-nums"
+                      style={{
+                        color:
+                          ind.signal === "positive" ? "#34d399"
+                          : ind.signal === "negative" ? "#f87171"
+                          : "#93c5fd",
+                      }}
+                    >
+                      {ind.formattedValue}
                     </span>
+                    {ind.isProxy && (
+                      <span className="text-[9px] font-semibold px-1 py-0.5 rounded border border-zinc-700 text-zinc-500 uppercase tracking-wide leading-none">
+                        est.
+                      </span>
+                    )}
+                  </div>
+                  {ind.date && (
+                    <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(ind.date)}</div>
+                  )}
+                  {ind.isProxy && ind.proxySource && (
+                    <div className="text-[10px] text-zinc-700 mt-0.5 leading-tight">{ind.proxySource}</div>
                   )}
                 </div>
-                {ind.date && (
-                  <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(ind.date)}</div>
-                )}
-                {ind.isProxy && ind.proxySource && (
-                  <div className="text-[10px] text-zinc-700 mt-0.5 leading-tight">{ind.proxySource}</div>
-                )}
-              </div>
-            ) : (
-              <div>
-                <span className="text-xs text-zinc-600">—</span>
-                {ind.unavailableReason && (
-                  <div className="text-[10px] text-zinc-700 mt-0.5 whitespace-nowrap">{ind.unavailableReason}</div>
-                )}
-              </div>
-            )}
+              ) : (
+                <div>
+                  <span className="text-xs text-zinc-600">—</span>
+                  {ind.unavailableReason && (
+                    <div className="text-[10px] text-zinc-700 mt-0.5 whitespace-nowrap">{ind.unavailableReason}</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Source */}
+            <div className="text-xs text-zinc-400">{ind.source}</div>
+
+            {/* Frequency */}
+            <div className="text-xs text-zinc-400">{ind.frequency}</div>
+
+            {/* Type badge */}
+            <div>
+              <TypeBadge type={ind.type} />
+            </div>
           </div>
-
-          {/* Source */}
-          <div className="text-xs text-zinc-400">{ind.source}</div>
-
-          {/* Frequency */}
-          <div className="text-xs text-zinc-400">{ind.frequency}</div>
-
-          {/* Type badge */}
-          <div>
-            <TypeBadge type={ind.type} />
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -264,10 +252,7 @@ export default function GrowthPage() {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-8 text-center">
         <div className="text-zinc-400 text-sm mb-2">Failed to load growth data</div>
-        <button
-          onClick={() => refetch()}
-          className="text-xs text-blue-400 hover:text-blue-300 underline"
-        >
+        <button onClick={() => refetch()} className="text-xs text-blue-400 hover:text-blue-300 underline">
           Try again
         </button>
       </div>
@@ -289,12 +274,7 @@ export default function GrowthPage() {
           disabled={isFetching}
           className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-40 border border-zinc-800 rounded-lg px-3 py-1.5"
         >
-          <svg
-            className={`w-3 h-3 ${isFetching ? "animate-spin" : ""}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
+          <svg className={`w-3 h-3 ${isFetching ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
@@ -318,6 +298,7 @@ export default function GrowthPage() {
           <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
             B · GDP Activity &amp; Indicators
           </span>
+          <span className="text-[10px] text-zinc-600">· click a row to view history</span>
         </div>
         <IndicatorsTable indicators={data.indicators} />
 

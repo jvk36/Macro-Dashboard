@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { useHistoryModal } from "@/context/HistoryModalContext";
+import { getSeriesId } from "@/lib/seriesIds";
 
 type GlobSig = "positive" | "neutral" | "warning" | "negative" | null;
 type TrendColor = "emerald" | "blue" | "amber" | "red" | "teal" | "zinc";
@@ -143,7 +145,7 @@ function PmiTable({ rows, note }: { rows: PmiRow[]; note: string }) {
       {rows.map((row, idx) => (
         <div
           key={row.code}
-          className={`grid grid-cols-[2fr_1fr_1fr_1.4fr] gap-x-3 px-4 py-3 items-center hover:bg-zinc-800/20 transition-colors ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""}`}
+          className={`grid grid-cols-[2fr_1fr_1fr_1.4fr] gap-x-3 px-4 py-3 items-center transition-colors ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""}`}
         >
           <div className="flex items-center gap-2">
             <span className="text-base leading-none">{row.flag}</span>
@@ -169,6 +171,7 @@ function PmiTable({ rows, note }: { rows: PmiRow[]; note: string }) {
 
 // ─── Section B: Indicators Table ──────────────────────────────────────────────
 function IndicatorsTable({ rows }: { rows: IndRow[] }) {
+  const { open } = useHistoryModal();
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
       <div className="grid grid-cols-[2.2fr_1fr_1fr_0.9fr_2.8fr] gap-x-3 px-4 py-2.5 border-b border-zinc-800 bg-zinc-950">
@@ -179,38 +182,42 @@ function IndicatorsTable({ rows }: { rows: IndRow[] }) {
         <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Impact</span>
       </div>
 
-      {rows.map((row, idx) => (
-        <div
-          key={row.id}
-          className={`grid grid-cols-[2.2fr_1fr_1fr_0.9fr_2.8fr] gap-x-3 px-4 py-3 items-start hover:bg-zinc-800/20 transition-colors ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""}`}
-        >
-          <div className="flex items-center gap-2.5 pt-0.5">
-            <SignalDot signal={row.signal} />
-            <span className="text-sm font-medium text-zinc-200">{row.name}</span>
-          </div>
+      {rows.map((row, idx) => {
+        const seriesId = getSeriesId(row.id);
+        return (
+          <div
+            key={row.id}
+            onClick={seriesId && row.available ? () => open(seriesId, row.name) : undefined}
+            className={`grid grid-cols-[2.2fr_1fr_1fr_0.9fr_2.8fr] gap-x-3 px-4 py-3 items-start hover:bg-zinc-800/20 transition-colors ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} ${seriesId && row.available ? "cursor-pointer" : ""}`}
+          >
+            <div className="flex items-center gap-2.5 pt-0.5">
+              <SignalDot signal={row.signal} />
+              <span className="text-sm font-medium text-zinc-200">{row.name}</span>
+            </div>
 
-          <div className="text-right">
-            {row.available ? (
-              <div>
-                <span className={`text-sm font-bold tabular-nums ${sigText(row.signal)}`}>
-                  {row.formattedValue}
-                </span>
-                {row.date && (
-                  <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(row.date)}</div>
-                )}
-              </div>
-            ) : (
-              <span className="text-xs text-zinc-600">—</span>
-            )}
-          </div>
+            <div className="text-right">
+              {row.available ? (
+                <div>
+                  <span className={`text-sm font-bold tabular-nums ${sigText(row.signal)}`}>
+                    {row.formattedValue}
+                  </span>
+                  {row.date && (
+                    <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(row.date)}</div>
+                  )}
+                </div>
+              ) : (
+                <span className="text-xs text-zinc-600">—</span>
+              )}
+            </div>
 
-          <div className="text-xs text-zinc-400 pt-0.5">{row.source}</div>
-          <div className="pt-0.5">
-            <StatusBadge signal={row.signal} status={row.status} />
+            <div className="text-xs text-zinc-400 pt-0.5">{row.source}</div>
+            <div className="pt-0.5">
+              <StatusBadge signal={row.signal} status={row.status} />
+            </div>
+            <div className="text-xs text-zinc-500 leading-relaxed">{row.impact}</div>
           </div>
-          <div className="text-xs text-zinc-500 leading-relaxed">{row.impact}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -277,7 +284,7 @@ export default function GlobalPage() {
       {/* Section A */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          A · Key Global Indicators
+          A · Key Global Indicators · <span className="normal-case font-normal text-zinc-600">click a row to view history</span>
         </div>
         <IndicatorsTable rows={data.indicators} />
       </div>

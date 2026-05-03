@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { useHistoryModal } from "@/context/HistoryModalContext";
+import { getSeriesId } from "@/lib/seriesIds";
 
 type LaborSig = "positive" | "neutral" | "warning" | "negative" | null;
 
@@ -72,7 +74,7 @@ const HEALTH_META: Record<string, { subtitle: string; context: string }> = {
   jolts:   { subtitle: "Job Openings (JOLTS)", context: ">8M very tight · 7–8M tight · 6–7M balanced · <6M softening" },
 };
 
-function HealthCard({ id, label, metric }: { id: string; label: string; metric: HealthMetric | null }) {
+function HealthCard({ id, label, metric, onClick }: { id: string; label: string; metric: HealthMetric | null; onClick?: () => void }) {
   const meta = HEALTH_META[id];
   if (!metric) {
     return (
@@ -83,7 +85,10 @@ function HealthCard({ id, label, metric }: { id: string; label: string; metric: 
     );
   }
   return (
-    <div className={`rounded-xl border bg-zinc-900 p-5 flex flex-col gap-3 ${sigBorder(metric.signal)}`}>
+    <div
+      onClick={onClick}
+      className={`rounded-xl border bg-zinc-900 p-5 flex flex-col gap-3 ${sigBorder(metric.signal)} ${onClick ? "cursor-pointer hover:bg-zinc-800/40 transition-colors" : ""}`}
+    >
       <div>
         <div className="text-xs font-semibold text-zinc-400">{meta.subtitle}</div>
       </div>
@@ -107,6 +112,7 @@ function HealthCard({ id, label, metric }: { id: string; label: string; metric: 
 
 // ─── Full suite table ─────────────────────────────────────────────────────────
 function SuiteTable({ rows }: { rows: SuiteRow[] }) {
+  const { open } = useHistoryModal();
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
       {/* Header */}
@@ -117,47 +123,51 @@ function SuiteTable({ rows }: { rows: SuiteRow[] }) {
         <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Signal</span>
       </div>
 
-      {rows.map((row, idx) => (
-        <div
-          key={row.id}
-          className={`grid grid-cols-[2.5fr_1fr_0.7fr_1.2fr] gap-x-4 px-4 py-3 items-center ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors`}
-        >
-          {/* Name */}
-          <div className="flex items-center gap-2.5">
-            <SignalDot signal={row.signal} />
-            <span className="text-sm font-medium text-zinc-200">{row.name}</span>
-          </div>
+      {rows.map((row, idx) => {
+        const seriesId = getSeriesId(row.id);
+        return (
+          <div
+            key={row.id}
+            onClick={seriesId && row.available ? () => open(seriesId, row.name) : undefined}
+            className={`grid grid-cols-[2.5fr_1fr_0.7fr_1.2fr] gap-x-4 px-4 py-3 items-center ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors ${seriesId && row.available ? "cursor-pointer" : ""}`}
+          >
+            {/* Name */}
+            <div className="flex items-center gap-2.5">
+              <SignalDot signal={row.signal} />
+              <span className="text-sm font-medium text-zinc-200">{row.name}</span>
+            </div>
 
-          {/* Value */}
-          <div className="text-right">
-            {row.available ? (
-              <div>
-                <span className={`text-sm font-bold tabular-nums ${sigText(row.signal)}`}>
-                  {row.formattedValue}
-                </span>
-                {row.date && (
-                  <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(row.date)}</div>
-                )}
-              </div>
-            ) : (
-              <div>
-                <span className="text-xs text-zinc-600">—</span>
-                {row.unavailableReason && (
-                  <div className="text-[10px] text-zinc-700 mt-0.5 whitespace-nowrap">{row.unavailableReason}</div>
-                )}
-              </div>
-            )}
-          </div>
+            {/* Value */}
+            <div className="text-right">
+              {row.available ? (
+                <div>
+                  <span className={`text-sm font-bold tabular-nums ${sigText(row.signal)}`}>
+                    {row.formattedValue}
+                  </span>
+                  {row.date && (
+                    <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(row.date)}</div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <span className="text-xs text-zinc-600">—</span>
+                  {row.unavailableReason && (
+                    <div className="text-[10px] text-zinc-700 mt-0.5 whitespace-nowrap">{row.unavailableReason}</div>
+                  )}
+                </div>
+              )}
+            </div>
 
-          {/* Source */}
-          <div className="text-xs text-zinc-400">{row.source}</div>
+            {/* Source */}
+            <div className="text-xs text-zinc-400">{row.source}</div>
 
-          {/* Signal badge */}
-          <div>
-            <StatusBadge signal={row.signal} status={row.status} />
+            {/* Signal badge */}
+            <div>
+              <StatusBadge signal={row.signal} status={row.status} />
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -178,6 +188,7 @@ function LaborSkeleton() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function LaborPage() {
+  const { open } = useHistoryModal();
   const { data, isLoading, error, refetch, isFetching } = useQuery<LaborTabData>({
     queryKey: ["tab-labor-v2"],
     queryFn: () => apiFetch<LaborTabData>("/api/macro/tab/labor"),
@@ -224,20 +235,24 @@ export default function LaborPage() {
       {/* Section A */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          A · Labor Market Health
+          A · Labor Market Health · <span className="normal-case font-normal text-zinc-600">click a card to view history</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <HealthCard id="nfpMoM" label="Nonfarm Payrolls"         metric={data.health.nfpMoM}  />
-          <HealthCard id="unrate" label="Unemployment Rate"        metric={data.health.unrate}  />
-          <HealthCard id="aweYoY" label="Avg Hourly Earnings"      metric={data.health.aweYoY}  />
-          <HealthCard id="jolts"  label="Job Openings (JOLTS)"     metric={data.health.jolts}   />
+          <HealthCard id="nfpMoM" label="Nonfarm Payrolls"   metric={data.health.nfpMoM}
+            onClick={data.health.nfpMoM ? () => open("PAYEMS", "Nonfarm Payrolls") : undefined} />
+          <HealthCard id="unrate" label="Unemployment Rate"  metric={data.health.unrate}
+            onClick={data.health.unrate ? () => open("UNRATE", "Unemployment Rate") : undefined} />
+          <HealthCard id="aweYoY" label="Avg Hourly Earnings" metric={data.health.aweYoY}
+            onClick={data.health.aweYoY ? () => open("CES0500000003", "Avg Hourly Earnings") : undefined} />
+          <HealthCard id="jolts"  label="Job Openings (JOLTS)" metric={data.health.jolts}
+            onClick={data.health.jolts ? () => open("JTSJOL", "Job Openings (JOLTS)") : undefined} />
         </div>
       </div>
 
       {/* Section B */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          B · Full Labor Data Suite
+          B · Full Labor Data Suite · <span className="normal-case font-normal text-zinc-600">click a row to view history</span>
         </div>
         <SuiteTable rows={data.suite} />
       </div>

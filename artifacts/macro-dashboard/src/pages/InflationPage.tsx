@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { useHistoryModal } from "@/context/HistoryModalContext";
+import { getSeriesId } from "@/lib/seriesIds";
 
 type InflSig = "positive" | "neutral" | "warning" | "negative" | null;
 
@@ -82,13 +84,34 @@ function SignalDot({ signal }: { signal: InflSig }) {
   );
 }
 
+// ─── Headline key IDs → FRED series ──────────────────────────────────────────
+const HEADLINE_SERIES: Record<string, string> = {
+  cpi:     "CPIAUCSL",
+  coreCpi: "CPILFESL",
+  pce:     "PCEPI",
+  corePce: "PCEPILFE",
+};
+
 // ─── Section A: Headline Reading Card ────────────────────────────────────────
-function HeadlineCard({ label, subtitle, data }: { label: string; subtitle: string; data: HeadlineReading }) {
+function HeadlineCard({
+  label, subtitle, data, seriesId,
+}: {
+  label: string;
+  subtitle: string;
+  data: HeadlineReading;
+  seriesId: string | null;
+}) {
+  const { open } = useHistoryModal();
   const { value, date, signal, status } = data;
   return (
     <div
-      className="rounded-xl border bg-zinc-900 p-5 flex flex-col gap-3"
-      style={{ borderColor: signal ? `${SIG_COLORS[signal].border.replace("border-", "").replace("/30", "")}` : "#27272a" }}
+      onClick={seriesId && value !== null ? () => open(seriesId, label) : undefined}
+      className={`rounded-xl border bg-zinc-900 p-5 flex flex-col gap-3 ${
+        signal ? `border-${SIG_COLORS[signal].border.replace("border-", "")}` : "border-zinc-800"
+      } ${seriesId && value !== null ? "cursor-pointer hover:bg-zinc-800/40 transition-colors" : ""}`}
+      style={{
+        borderColor: signal ? undefined : "#27272a",
+      }}
     >
       <div>
         <div className="text-xs font-semibold text-zinc-400 mb-0.5">{label}</div>
@@ -110,7 +133,6 @@ function HeadlineCard({ label, subtitle, data }: { label: string; subtitle: stri
       {/* Target bar */}
       {value !== null && (
         <div className="relative h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-          {/* Target line at 2% */}
           <div className="absolute top-0 bottom-0 w-0.5 bg-emerald-600/60 z-10" style={{ left: `${Math.min(100, (2 / 8) * 100)}%` }} />
           <div
             className="h-full rounded-full transition-all duration-500"
@@ -133,17 +155,22 @@ function HeadlineCard({ label, subtitle, data }: { label: string; subtitle: stri
 }
 
 // ─── Section B: Component Row ────────────────────────────────────────────────
-const COMPONENT_SCALE = { min: -8, max: 12 }; // display scale in percent
+const COMPONENT_SCALE = { min: -8, max: 12 };
 
 function ComponentRow({ comp, isLast }: { comp: Component; isLast: boolean }) {
-  const { name, value, date, signal, status } = comp;
+  const { open } = useHistoryModal();
+  const { id, name, value, date, signal, status } = comp;
+  const seriesId = getSeriesId(id);
   const pct = value !== null
     ? Math.max(0, Math.min(100, ((value - COMPONENT_SCALE.min) / (COMPONENT_SCALE.max - COMPONENT_SCALE.min)) * 100))
     : 0;
   const targetPct = Math.max(0, Math.min(100, ((2 - COMPONENT_SCALE.min) / (COMPONENT_SCALE.max - COMPONENT_SCALE.min)) * 100));
 
   return (
-    <div className={`flex items-center gap-4 px-4 py-3 ${!isLast ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors`}>
+    <div
+      onClick={seriesId && value !== null ? () => open(seriesId, name) : undefined}
+      className={`flex items-center gap-4 px-4 py-3 ${!isLast ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors ${seriesId && value !== null ? "cursor-pointer" : ""}`}
+    >
       {/* Name + dot */}
       <div className="w-52 flex items-center gap-2.5 shrink-0">
         <SignalDot signal={signal} />
@@ -153,17 +180,14 @@ function ComponentRow({ comp, isLast }: { comp: Component; isLast: boolean }) {
       {/* Bar */}
       <div className="flex-1 relative h-5 flex items-center">
         <div className="w-full h-2 rounded-full bg-zinc-800 relative overflow-hidden">
-          {/* Zero line */}
           <div
             className="absolute top-0 bottom-0 w-px bg-zinc-600 z-10"
             style={{ left: `${((0 - COMPONENT_SCALE.min) / (COMPONENT_SCALE.max - COMPONENT_SCALE.min)) * 100}%` }}
           />
-          {/* Target line at 2% */}
           <div
             className="absolute top-0 bottom-0 w-px bg-emerald-600/70 z-10"
             style={{ left: `${targetPct}%` }}
           />
-          {/* Value bar */}
           {value !== null && (
             <div
               className="absolute top-0 bottom-0 rounded-full transition-all duration-500"
@@ -177,7 +201,6 @@ function ComponentRow({ comp, isLast }: { comp: Component; isLast: boolean }) {
             />
           )}
         </div>
-        {/* Scale labels */}
         <div className="absolute -bottom-3.5 left-0 text-[9px] text-zinc-700">{COMPONENT_SCALE.min}%</div>
         <div className="absolute -bottom-3.5 right-0 text-[9px] text-zinc-700">{COMPONENT_SCALE.max}%</div>
       </div>
@@ -204,6 +227,7 @@ function ComponentRow({ comp, isLast }: { comp: Component; isLast: boolean }) {
 
 // ─── Section C: Data Suite Table ─────────────────────────────────────────────
 function DataSuiteTable({ rows }: { rows: SuiteRow[] }) {
+  const { open } = useHistoryModal();
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
       <div className="grid grid-cols-[2fr_1fr_1fr_3fr] gap-x-3 px-4 py-2.5 border-b border-zinc-800 bg-zinc-950">
@@ -212,31 +236,35 @@ function DataSuiteTable({ rows }: { rows: SuiteRow[] }) {
         <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Source</span>
         <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Why It Matters</span>
       </div>
-      {rows.map((row, idx) => (
-        <div
-          key={row.id}
-          className={`grid grid-cols-[2fr_1fr_1fr_3fr] gap-x-3 px-4 py-3 items-start ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors`}
-        >
-          <div className="text-sm font-medium text-zinc-200">{row.name}</div>
-          <div className="text-right">
-            {row.available ? (
-              <div>
-                <span className="text-sm font-bold tabular-nums text-zinc-100">{row.formattedValue}</span>
-                {row.date && <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(row.date)}</div>}
-              </div>
-            ) : (
-              <div>
-                <span className="text-xs text-zinc-600">—</span>
-                {row.unavailableReason && (
-                  <div className="text-[10px] text-zinc-700 mt-0.5">{row.unavailableReason}</div>
-                )}
-              </div>
-            )}
+      {rows.map((row, idx) => {
+        const seriesId = getSeriesId(row.id);
+        return (
+          <div
+            key={row.id}
+            onClick={seriesId && row.available ? () => open(seriesId, row.name) : undefined}
+            className={`grid grid-cols-[2fr_1fr_1fr_3fr] gap-x-3 px-4 py-3 items-start ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors ${seriesId && row.available ? "cursor-pointer" : ""}`}
+          >
+            <div className="text-sm font-medium text-zinc-200">{row.name}</div>
+            <div className="text-right">
+              {row.available ? (
+                <div>
+                  <span className="text-sm font-bold tabular-nums text-zinc-100">{row.formattedValue}</span>
+                  {row.date && <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(row.date)}</div>}
+                </div>
+              ) : (
+                <div>
+                  <span className="text-xs text-zinc-600">—</span>
+                  {row.unavailableReason && (
+                    <div className="text-[10px] text-zinc-700 mt-0.5">{row.unavailableReason}</div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="text-xs text-zinc-400 pt-0.5">{row.source}</div>
+            <div className="text-xs text-zinc-500 leading-relaxed">{row.whyItMatters}</div>
           </div>
-          <div className="text-xs text-zinc-400 pt-0.5">{row.source}</div>
-          <div className="text-xs text-zinc-500 leading-relaxed">{row.whyItMatters}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -306,39 +334,22 @@ export default function InflationPage() {
       {/* Section A */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          A · Headline Readings
+          A · Headline Readings · <span className="normal-case font-normal text-zinc-600">click a card to view history</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <HeadlineCard
-            label="CPI (YoY)"
-            subtitle="All Urban Consumers"
-            data={h.cpi}
-          />
-          <HeadlineCard
-            label="Core CPI (YoY)"
-            subtitle="Ex-Food & Energy"
-            data={h.coreCpi}
-          />
-          <HeadlineCard
-            label="PCE Deflator (YoY)"
-            subtitle="Fed's Primary Gauge"
-            data={h.pce}
-          />
-          <HeadlineCard
-            label="Core PCE (YoY)"
-            subtitle="Fed's 2% Target Measure"
-            data={h.corePce}
-          />
+          <HeadlineCard label="CPI (YoY)"          subtitle="All Urban Consumers"     data={h.cpi}     seriesId={HEADLINE_SERIES.cpi} />
+          <HeadlineCard label="Core CPI (YoY)"     subtitle="Ex-Food & Energy"        data={h.coreCpi} seriesId={HEADLINE_SERIES.coreCpi} />
+          <HeadlineCard label="PCE Deflator (YoY)" subtitle="Fed's Primary Gauge"     data={h.pce}     seriesId={HEADLINE_SERIES.pce} />
+          <HeadlineCard label="Core PCE (YoY)"     subtitle="Fed's 2% Target Measure" data={h.corePce} seriesId={HEADLINE_SERIES.corePce} />
         </div>
       </div>
 
       {/* Section B */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          B · CPI Component Breakdown — Year-over-Year %
+          B · CPI Component Breakdown — Year-over-Year % · <span className="normal-case font-normal text-zinc-600">click a row to view history</span>
         </div>
         <div className="rounded-xl border border-zinc-800 bg-zinc-900 pb-5">
-          {/* Column headers */}
           <div className="flex items-center gap-4 px-4 py-2 border-b border-zinc-800 bg-zinc-950 rounded-t-xl">
             <span className="w-52 text-[10px] font-semibold uppercase tracking-widest text-zinc-500 shrink-0">Component</span>
             <span className="flex-1 text-[10px] font-semibold uppercase tracking-widest text-zinc-500 pl-1">
@@ -358,7 +369,7 @@ export default function InflationPage() {
       {/* Section C */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          C · Full Inflation Data Suite
+          C · Full Inflation Data Suite · <span className="normal-case font-normal text-zinc-600">click a row to view history</span>
         </div>
         <DataSuiteTable rows={dataSuite} />
       </div>
