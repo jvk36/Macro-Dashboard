@@ -107,7 +107,8 @@ function PmiChip({ entry }: { entry: PmiEntry | PmiEntryNA }) {
 }
 
 // ─── Stale-data alert banner ───────────────────────────────────────────────────
-function StaleAlert({ text }: { text: string }) {
+function StaleAlert({ text }: { text?: string }) {
+  if (!text) return null;
   return (
     <div
       className="flex items-start gap-2.5 rounded-lg border border-amber-500/25 px-3.5 py-2.5"
@@ -231,7 +232,7 @@ function GlobalSkeleton() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function GlobalPage() {
   const { data, isLoading, error, refetch, isFetching } = useQuery<GlobalTabData>({
-    queryKey: ["tab-global-v1"],
+    queryKey: ["tab-global-v2"],
     queryFn: () => apiFetch<GlobalTabData>("/api/macro/tab/global"),
     staleTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
