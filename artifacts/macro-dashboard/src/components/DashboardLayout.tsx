@@ -27,9 +27,9 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ activeTab, onTabChange, children }: DashboardLayoutProps) {
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ background: "linear-gradient(160deg, #0d1526 0%, #0b1120 40%, #0c1628 100%)" }}>
       {/* Header */}
-      <header className="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-sm sticky top-0 z-40">
+      <header className="border-b border-zinc-800 sticky top-0 z-40 backdrop-blur-md" style={{ backgroundColor: "rgba(11,17,32,0.88)" }}>
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center gap-3 h-14">
             <div className="flex items-center gap-2 flex-shrink-0">

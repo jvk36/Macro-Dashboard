@@ -2,6 +2,24 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
+/* ─── Premium Navy Theme ──────────────────────────────────────────────────────
+ * Remap the zinc color scale to a deep navy palette.
+ * Every component using zinc-* classes inherits the new scheme automatically.
+ * ─────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --color-zinc-950: #0b1120;
+  --color-zinc-900: #101929;
+  --color-zinc-800: #19273d;
+  --color-zinc-700: #243450;
+  --color-zinc-600: #375066;
+  --color-zinc-500: #56748f;
+  --color-zinc-400: #85a0b8;
+  --color-zinc-300: #aec3d4;
+  --color-zinc-200: #cddde9;
+  --color-zinc-100: #e5eff6;
+  --color-zinc-50:  #f2f7fb;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
