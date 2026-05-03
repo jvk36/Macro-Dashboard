@@ -1337,4 +1337,223 @@ router.get("/macro/tab/financial", async (req, res) => {
   }
 });
 
+// ── Global Tab ────────────────────────────────────────────────────────────────
+router.get("/macro/tab/global", async (req, res) => {
+  try {
+    const [
+      usBciRes, ezBciRes, gbBciRes, jpBciRes, cnBciRes, inBciRes,
+      usCliRes, gbCliRes, jpCliRes, cnCliRes, inCliRes, oecdCliRes,
+      ecbRes, soniaRes,
+      ezHicpRes, jpCpiRes, gbCpiRes, cnCpiRes,
+      ezUnempRes, brentRes, eurusdRes, jpyusdRes, cnyusdRes,
+    ] = await Promise.allSettled([
+      getObservations("BSCICP03USM665S", 3),
+      getObservations("BSCICP03EZM665S", 3),
+      getObservations("BSCICP03GBM665S", 3),
+      getObservations("BSCICP03JPM665S", 3),
+      getObservations("BSCICP03CNM665S", 3),
+      getObservations("BSCICP03INM665S", 3),
+      getObservations("USALOLITONOSTSAM", 3),
+      getObservations("GBRLOLITONOSTSAM", 3),
+      getObservations("JPNLOLITONOSTSAM", 3),
+      getObservations("CHNLOLITONOSTSAM", 3),
+      getObservations("INDLOLITONOSTSAM", 3),
+      getObservations("OECDLOLITONOSTSAM", 3),
+      getLatestValue("ECBDFR"),
+      getLatestValue("IUDSOIA"),
+      getObservations("CP0000EZ19M086NEST", 14),
+      getObservations("JPNCPIALLMINMEI", 14),
+      getObservations("GBRCPIALLMINMEI", 14),
+      getObservations("CHNCPIALLMINMEI", 14),
+      getLatestValue("LRHUTTTTEZM156S"),
+      getLatestValue("DCOILBRENTEU"),
+      getLatestValue("DEXUSEU"),
+      getLatestValue("DEXJPUS"),
+      getLatestValue("DEXCHUS"),
+    ]);
+
+    type GlobSig = "positive" | "neutral" | "warning" | "negative";
+
+    function lvObs(r: PromiseSettledResult<{ value: string; date: string }[]>): { value: number; date: string } | null {
+      if (r.status !== "fulfilled") return null;
+      const obs = r.value.filter((o) => o.value !== ".");
+      if (!obs.length) return null;
+      const last = obs[obs.length - 1];
+      const v = parseFloat(last.value);
+      return isFinite(v) ? { value: v, date: last.date } : null;
+    }
+
+    function lv(r: PromiseSettledResult<{ value: number; date: string }>): { value: number; date: string } | null {
+      return r.status === "fulfilled" ? r.value : null;
+    }
+
+    // OECD BCI/CLI centered at 100 → PMI-like centered at 50
+    function toPmi(r: PromiseSettledResult<{ value: string; date: string }[]>): { value: number; date: string } | null {
+      const v = lvObs(r);
+      if (!v) return null;
+      return { value: parseFloat((v.value - 50).toFixed(2)), date: v.date };
+    }
+
+    function yoyFromIdx(r: PromiseSettledResult<{ value: string; date: string }[]>): { value: number; date: string } | null {
+      if (r.status !== "fulfilled") return null;
+      const obs = r.value.filter((o) => o.value !== ".");
+      if (obs.length < 13) return null;
+      const latest   = parseFloat(obs[obs.length - 1].value);
+      const yearAgo  = parseFloat(obs[obs.length - 13].value);
+      if (!isFinite(latest) || !isFinite(yearAgo) || yearAgo === 0) return null;
+      return { value: ((latest - yearAgo) / Math.abs(yearAgo)) * 100, date: obs[obs.length - 1].date };
+    }
+
+    type TrendColor = "emerald" | "blue" | "amber" | "red" | "teal" | "zinc";
+    function computeTrend(mfg: { value: number } | null, composite: { value: number } | null): { trend: string; color: TrendColor } {
+      const m = mfg?.value ?? null;
+      const c = composite?.value ?? null;
+      if (m === null && c === null) return { trend: "No Data", color: "zinc" };
+      if (m !== null && c !== null) {
+        if (m >= 50 && c >= 50) {
+          if (c - m >= 1.5) return { trend: "Services Led",  color: "blue" };
+          if (m - c >= 1.5) return { trend: "Mfg Led",       color: "teal" };
+          return { trend: "Broad Growth", color: "emerald" };
+        }
+        if (m >= 50 && c < 50)  return { trend: "Mixed",    color: "amber" };
+        if (m < 50  && c >= 50) return { trend: "Services Led", color: "blue" };
+        const avg = (m + c) / 2;
+        if (avg < 48) return { trend: "Contraction",  color: "red" };
+        return { trend: "Weak / Mixed", color: "amber" };
+      }
+      const val = (m ?? c)!;
+      if (val >= 51)   return { trend: "Expanding",   color: "emerald" };
+      if (val >= 49.5) return { trend: "Neutral",      color: "blue" };
+      if (val >= 48)   return { trend: "Softening",    color: "amber" };
+      return { trend: "Contracting", color: "red" };
+    }
+
+    const fmtPmi  = (v: number) => v.toFixed(1);
+    const fmtPct  = (v: number) => `${v.toFixed(2)}%`;
+    const fmtYoY  = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+
+    function cpiSig(v: number):   { signal: GlobSig; status: string } {
+      if (v <= 2.5) return { signal: "positive", status: "On Target" };
+      if (v <= 3.5) return { signal: "neutral",  status: "Elevated"  };
+      if (v <= 5.5) return { signal: "warning",  status: "High"      };
+      return         { signal: "negative", status: "Very High" };
+    }
+    function ecbSig(v: number):   { signal: GlobSig; status: string } {
+      if (v <= 1.5) return { signal: "positive", status: "Accommodative"    };
+      if (v <= 2.5) return { signal: "neutral",  status: "Neutral"          };
+      if (v <= 4.0) return { signal: "warning",  status: "Restrictive"      };
+      return         { signal: "negative", status: "Very Restrictive" };
+    }
+    function soniaSig(v: number): { signal: GlobSig; status: string } {
+      if (v <= 2.0) return { signal: "positive", status: "Accommodative" };
+      if (v <= 3.5) return { signal: "neutral",  status: "Neutral"       };
+      if (v <= 5.0) return { signal: "warning",  status: "Restrictive"   };
+      return         { signal: "negative", status: "Very Restrictive" };
+    }
+    function unempSig(v: number): { signal: GlobSig; status: string } {
+      if (v <= 7.0)  return { signal: "positive", status: "Low"      };
+      if (v <= 9.0)  return { signal: "neutral",  status: "Moderate" };
+      if (v <= 11.0) return { signal: "warning",  status: "Elevated" };
+      return          { signal: "negative", status: "High"     };
+    }
+    function brentSig(v: number): { signal: GlobSig; status: string } {
+      if (v <= 60)  return { signal: "positive", status: "Low"      };
+      if (v <= 80)  return { signal: "neutral",  status: "Moderate" };
+      if (v <= 100) return { signal: "warning",  status: "Elevated" };
+      return         { signal: "negative", status: "High"     };
+    }
+    function eurusdSig(v: number): { signal: GlobSig; status: string } {
+      if (v >= 1.10) return { signal: "positive", status: "Strong EUR" };
+      if (v >= 1.05) return { signal: "neutral",  status: "Neutral"    };
+      if (v >= 0.98) return { signal: "warning",  status: "Weak EUR"   };
+      return          { signal: "negative", status: "Very Weak EUR" };
+    }
+    function jpySig(v: number): { signal: GlobSig; status: string } {
+      if (v <= 130) return { signal: "positive", status: "Strong JPY"    };
+      if (v <= 150) return { signal: "neutral",  status: "Moderate"      };
+      if (v <= 160) return { signal: "warning",  status: "Weak JPY"      };
+      return         { signal: "negative", status: "Very Weak JPY" };
+    }
+    function cnySig(v: number): { signal: GlobSig; status: string } {
+      if (v <= 7.0) return { signal: "positive", status: "Stable CNY" };
+      if (v <= 7.3) return { signal: "neutral",  status: "Moderate"   };
+      return         { signal: "warning",  status: "Weak CNY"   };
+    }
+
+    function indRow(
+      id: string, name: string, data: { value: number; date: string } | null,
+      source: string, fmt: (v: number) => string,
+      sig: (v: number) => { signal: GlobSig; status: string }, impact: string,
+    ) {
+      if (!data) return { id, name, value: null, formattedValue: "—", date: null, source, signal: null, status: "N/A", available: false, impact };
+      const { signal, status } = sig(data.value);
+      return { id, name, value: data.value, formattedValue: fmt(data.value), date: data.date, source, signal, status, available: true, impact };
+    }
+
+    function pmiRow(
+      region: string, code: string, flag: string,
+      mfg: { value: number; date: string } | null,
+      composite: { value: number; date: string } | null,
+    ) {
+      const trend = computeTrend(mfg, composite);
+      return {
+        region, code, flag,
+        mfg:       mfg       ? { value: mfg.value,       formatted: fmtPmi(mfg.value),       date: mfg.date,       available: true  } : { available: false },
+        composite: composite ? { value: composite.value, formatted: fmtPmi(composite.value), date: composite.date, available: true  } : { available: false },
+        trend: trend.trend, trendColor: trend.color,
+      };
+    }
+
+    const usMfg  = toPmi(usBciRes);  const usComp   = toPmi(usCliRes);
+    const ezMfg  = toPmi(ezBciRes);
+    const gbMfg  = toPmi(gbBciRes);  const gbComp   = toPmi(gbCliRes);
+    const jpMfg  = toPmi(jpBciRes);  const jpComp   = toPmi(jpCliRes);
+    const cnMfg  = toPmi(cnBciRes);  const cnComp   = toPmi(cnCliRes);
+    const inMfg  = toPmi(inBciRes);  const inComp   = toPmi(inCliRes);
+    const oecdComp = toPmi(oecdCliRes);
+
+    const ecb     = lv(ecbRes);
+    const sonia   = lv(soniaRes);
+    const ezCpi   = yoyFromIdx(ezHicpRes);
+    const jpCpi   = yoyFromIdx(jpCpiRes);
+    const gbCpi   = yoyFromIdx(gbCpiRes);
+    const cnCpi   = yoyFromIdx(cnCpiRes);
+    const ezUnemp = lv(ezUnempRes);
+    const brent   = lv(brentRes);
+    const eurusd  = lv(eurusdRes);
+    const jpyusd  = lv(jpyusdRes);
+    const cnyusd  = lv(cnyusdRes);
+
+    res.json({
+      pmiTable: [
+        pmiRow("United States",   "US",    "🇺🇸", usMfg,  usComp),
+        pmiRow("Eurozone",        "EZ",    "🇪🇺", ezMfg,  null),
+        pmiRow("United Kingdom",  "UK",    "🇬🇧", gbMfg,  gbComp),
+        pmiRow("Japan",           "JP",    "🇯🇵", jpMfg,  jpComp),
+        pmiRow("China (Caixin)",  "CN",    "🇨🇳", cnMfg,  cnComp),
+        pmiRow("India",           "IN",    "🇮🇳", inMfg,  inComp),
+        pmiRow("Global Composite","WORLD", "🌍",  null,   oecdComp),
+      ],
+      indicators: [
+        indRow("ecb",     "ECB Deposit Rate",       ecb,     "ECB",       fmtPct,               ecbSig,   "Drives Euro-area borrowing costs. Key signal for EUR-denominated bonds, bank margins, and European equity multiples."),
+        indRow("boe",     "BoE SONIA Rate",          sonia,   "BoE",       fmtPct,               soniaSig, "UK overnight benchmark rate — primary signal for BoE monetary stance and GBP asset pricing."),
+        indRow("ez_cpi",  "Eurozone CPI (YoY)",      ezCpi,   "Eurostat",  fmtYoY,               cpiSig,   "Main inflation gauge guiding ECB decisions. Above 3% sustains rate hikes; below 2% opens door to cuts."),
+        indRow("jp_cpi",  "Japan CPI (YoY)",         jpCpi,   "MIC Japan", fmtYoY,               cpiSig,   "After decades of deflation, rising Japan CPI reshapes BoJ policy, JPY carry trades, and global bond markets."),
+        indRow("gb_cpi",  "UK CPI (YoY)",            gbCpi,   "ONS",       fmtYoY,               cpiSig,   "Sticky UK inflation prolongs restrictive BoE policy, pressures GBP mortgages, and weighs on UK consumer spending."),
+        indRow("cn_cpi",  "China CPI (YoY)",         cnCpi,   "NBS",       fmtYoY,               cpiSig,   "Low or negative China CPI signals domestic demand weakness and deflation risk — potentially exported globally via trade prices."),
+        indRow("ez_unemp","Eurozone Unemployment",    ezUnemp, "Eurostat",  (v) => `${v.toFixed(1)}%`, unempSig, "Euro-area labor market health. Feeds into ECB wage-growth forecasts and inflation persistence assumptions."),
+        indRow("brent",   "Brent Crude ($/bbl)",     brent,   "EIA",       (v) => `$${v.toFixed(1)}`,  brentSig, "Global oil benchmark. Rising prices lift CPI in every economy; falling prices can signal slowing global demand."),
+        indRow("eurusd",  "EUR / USD",               eurusd,  "Fed",       (v) => v.toFixed(4),        eurusdSig,"Strong USD tightens global financial conditions; strong EUR signals European competitiveness and capital inflows."),
+        indRow("jpyusd",  "USD / JPY",               jpyusd,  "Fed",       (v) => v.toFixed(2),        jpySig,   "Yen weakness signals risk-on carry trade; extreme weakness can trigger BoJ intervention and global volatility."),
+        indRow("cnyusd",  "USD / CNY",               cnyusd,  "PBoC/Fed",  (v) => v.toFixed(4),        cnySig,   "Yuan management reflects PBoC stance. Sustained weakness exports deflation globally and pressures Asian FX peers."),
+      ],
+      pmiNote: "Mfg = OECD Business Confidence Index (BCI); Composite = OECD CLI Normalized. Both centered at 100 — displayed as PMI-equivalent (50 = neutral). Data typically lagged ~3–4 months.",
+      lastRefreshed: new Date().toISOString(),
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch global tab");
+    res.status(500).json({ error: "Failed to fetch global data" });
+  }
+});
+
 export default router;

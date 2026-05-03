@@ -15,7 +15,7 @@ const TABS: Tab[] = [
   { id: "inflation",  label: "Inflation",             shortLabel: "Inflation",  icon: Flame      },
   { id: "labor",      label: "Labor Market",          shortLabel: "Labor",      icon: Users      },
   { id: "financial",  label: "Financial Conditions",  shortLabel: "Financial",  icon: Activity   },
-  { id: "global",     label: "Global",                shortLabel: "Global",     icon: Globe,     badge: "Soon" },
+  { id: "global",     label: "Global",                shortLabel: "Global",     icon: Globe      },
   { id: "investor",   label: "Investor Guide",        shortLabel: "Guide",      icon: BookOpen,  badge: "Soon" },
 ];
 
