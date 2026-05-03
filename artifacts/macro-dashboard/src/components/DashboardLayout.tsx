@@ -16,7 +16,7 @@ const TABS: Tab[] = [
   { id: "labor",      label: "Labor Market",          shortLabel: "Labor",      icon: Users      },
   { id: "financial",  label: "Financial Conditions",  shortLabel: "Financial",  icon: Activity   },
   { id: "global",     label: "Global",                shortLabel: "Global",     icon: Globe      },
-  { id: "investor",   label: "Investor Guide",        shortLabel: "Guide",      icon: BookOpen,  badge: "Soon" },
+  { id: "investor",   label: "DIY Investor Guide",    shortLabel: "Guide",      icon: BookOpen   },
 ];
 
 interface DashboardLayoutProps {
