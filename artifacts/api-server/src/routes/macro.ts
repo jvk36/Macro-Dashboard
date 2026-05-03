@@ -828,16 +828,128 @@ router.get("/macro/tab/growth", async (req, res) => {
 
 router.get("/macro/tab/inflation", async (req, res) => {
   try {
-    const [cpi, coreInflation, pce, corePce, ppi, breakevens5y, breakevens10y] = await Promise.all([
-      buildSeriesHistory(SERIES.CPI, 60),
-      buildSeriesHistory(SERIES.CORE_CPI, 60),
-      buildSeriesHistory(SERIES.PCE, 60),
-      buildSeriesHistory(SERIES.CORE_PCE, 60),
-      buildSeriesHistory(SERIES.PPI, 60),
-      buildSeriesHistory(SERIES.BREAKEVEN_5Y, 60),
-      buildSeriesHistory(SERIES.BREAKEVEN_10Y, 60),
+    const [
+      cpiRes, coreCpiRes, pceRes, corePceRes,
+      shelterRes, supercoreRes, foodHomeRes, energyRes, newVehiclesRes,
+      ppiRes, michRes, t5yifrRes, oerRes, importPriceRes,
+    ] = await Promise.allSettled([
+      getObservations(SERIES.CPI, 14),
+      getObservations(SERIES.CORE_CPI, 14),
+      getObservations(SERIES.PCE, 14),
+      getObservations(SERIES.CORE_PCE, 14),
+      getObservations("CUSR0000SAH1", 14),
+      getObservations("CUSR0000SASLE", 14),
+      getObservations("CUSR0000SAF11", 14),
+      getObservations("CPIENGSL", 14),
+      getObservations("CUUR0000SETA01", 14),
+      getObservations("PPIFID", 14),
+      getLatestValue("MICH"),
+      getLatestValue("T5YIFR"),
+      getObservations("CUSR0000SEHC", 14),
+      getLatestValue("IR0000").catch(() => null),
     ]);
-    res.json({ cpi, coreInflation, pce, corePce, ppi, breakevens5y, breakevens10y, keyReadings: [] });
+
+    function yoyFromObs(res: PromiseSettledResult<{ value: string; date: string }[]>): { value: number; date: string } | null {
+      if (res.status !== "fulfilled") return null;
+      const obs = res.value.filter((o) => o.value !== ".");
+      if (obs.length < 13) return null;
+      const latest = parseFloat(obs[obs.length - 1].value);
+      const yearAgo = parseFloat(obs[obs.length - 13].value);
+      if (!isFinite(latest) || !isFinite(yearAgo) || yearAgo === 0) return null;
+      return { value: ((latest - yearAgo) / Math.abs(yearAgo)) * 100, date: obs[obs.length - 1].date };
+    }
+
+    type InflSig = "positive" | "neutral" | "warning" | "negative";
+    function inflSignal(v: number): { signal: InflSig; status: string } {
+      if (v < 0)   return { signal: "positive", status: "Deflationary" };
+      if (v < 2.0) return { signal: "positive", status: "Below Target" };
+      if (v <= 2.5) return { signal: "neutral",  status: "At Target" };
+      if (v <= 4.0) return { signal: "warning",  status: "Above Target" };
+      return           { signal: "negative", status: "Well Above Target" };
+    }
+
+    const cpiYoY    = yoyFromObs(cpiRes);
+    const coreCpiYoY = yoyFromObs(coreCpiRes);
+    const pceYoY    = yoyFromObs(pceRes);
+    const corePceYoY = yoyFromObs(corePceRes);
+
+    function headlineReading(d: { value: number; date: string } | null) {
+      if (!d) return { value: null, date: null, signal: null, status: null };
+      const { signal, status } = inflSignal(d.value);
+      return { value: d.value, date: d.date, signal, status };
+    }
+
+    const shelterYoY     = yoyFromObs(shelterRes);
+    const supercoreYoY   = yoyFromObs(supercoreRes);
+    const foodHomeYoY    = yoyFromObs(foodHomeRes);
+    const energyYoY      = yoyFromObs(energyRes);
+    const newVehiclesYoY = yoyFromObs(newVehiclesRes);
+    const ppiYoY         = yoyFromObs(ppiRes);
+    const oerYoY         = yoyFromObs(oerRes);
+
+    function component(id: string, name: string, data: { value: number; date: string } | null) {
+      if (!data) return { id, name, value: null, date: null, signal: null, status: null };
+      const { signal, status } = inflSignal(data.value);
+      return { id, name, value: data.value, date: data.date, signal, status };
+    }
+
+    const mich   = michRes.status === "fulfilled" ? michRes.value : null;
+    const t5yifr = t5yifrRes.status === "fulfilled" ? t5yifrRes.value : null;
+
+    const WHY: Record<string, string> = {
+      cpi:        "The headline consumer price gauge. Drives Social Security COLA, TIPS adjustments, and real-wage calculations.",
+      core_cpi:   "Strips volatile food & energy. The Fed monitors this for underlying price trends in policy meetings.",
+      pce:        "The Fed's preferred inflation gauge — uses different weights than CPI and runs ~0.3–0.5 pp lower.",
+      core_pce:   "The Fed's 2% target is measured here. The most critical single figure for rate-setting decisions.",
+      ppi:        "Upstream producer price pressures. Leads CPI by 1–3 months as costs pass through to consumers.",
+      import_px:  "Tracks imported goods prices; FX strength and global commodities flow through to headline CPI.",
+      t5yifr:     "Market's 5yr inflation expectation 5yrs forward — the Fed's preferred gauge of long-run price anchoring.",
+      mich:       "Survey-based 1yr consumer expectation. Feeds into wage negotiations and can become self-fulfilling.",
+      oer:        "~25% of CPI — the single largest component. Tracks implicit rent for homeowners; notoriously lagged.",
+      supercore:  "Core services ex-shelter — reflects labor cost pressures and is the 'stickiest' CPI component.",
+    };
+
+    function suite(id: string, name: string, value: number | null, date: string | null, source: string) {
+      if (value === null) return { id, name, value: null, formattedValue: "N/A", source, whyItMatters: WHY[id] ?? "", date: null, available: false };
+      return {
+        id, name,
+        value,
+        formattedValue: `${value >= 0 ? "" : ""}${value.toFixed(2)}%`,
+        source,
+        whyItMatters: WHY[id] ?? "",
+        date,
+        available: true,
+      };
+    }
+
+    res.json({
+      headlineReadings: {
+        cpi:    headlineReading(cpiYoY),
+        coreCpi: headlineReading(coreCpiYoY),
+        pce:    headlineReading(pceYoY),
+        corePce: headlineReading(corePceYoY),
+      },
+      components: [
+        component("shelter",     "Shelter / OER",                    shelterYoY),
+        component("supercore",   "Supercore (Services ex-Energy)",   supercoreYoY),
+        component("food_home",   "Food at Home",                     foodHomeYoY),
+        component("energy",      "Energy",                           energyYoY),
+        component("new_vehicles","New Vehicles",                     newVehiclesYoY),
+      ],
+      dataSuite: [
+        suite("cpi",       "CPI (All Items)",                  cpiYoY?.value ?? null,      cpiYoY?.date ?? null,       "BLS"),
+        suite("core_cpi",  "Core CPI (ex-Food & Energy)",      coreCpiYoY?.value ?? null,  coreCpiYoY?.date ?? null,   "BLS"),
+        suite("pce",       "PCE Deflator",                     pceYoY?.value ?? null,      pceYoY?.date ?? null,       "BEA"),
+        suite("core_pce",  "Core PCE",                         corePceYoY?.value ?? null,  corePceYoY?.date ?? null,   "BEA"),
+        suite("ppi",       "PPI (Final Demand)",                ppiYoY?.value ?? null,      ppiYoY?.date ?? null,       "BLS"),
+        { id: "import_px", name: "Import Price Index", value: null, formattedValue: "N/A", source: "BLS", whyItMatters: WHY.import_px, date: null, available: false, unavailableReason: "Not on FRED free tier" },
+        { id: "t5yifr",   name: "5Y5Y Breakeven Rate",         value: t5yifr?.value ?? null, formattedValue: t5yifr ? `${t5yifr.value.toFixed(2)}%` : "N/A", source: "Fed / TIPS", whyItMatters: WHY.t5yifr, date: t5yifr?.date ?? null, available: t5yifr !== null },
+        { id: "mich",     name: "Michigan Inflation Exp. (1Y)", value: mich?.value ?? null,  formattedValue: mich ? `${mich.value.toFixed(1)}%` : "N/A",        source: "UMich",      whyItMatters: WHY.mich,    date: mich?.date ?? null,    available: mich !== null },
+        suite("oer",       "Owners' Equivalent Rent (OER)",     oerYoY?.value ?? null,      oerYoY?.date ?? null,       "BLS"),
+        suite("supercore", "Supercore CPI",                     supercoreYoY?.value ?? null, supercoreYoY?.date ?? null, "BLS"),
+      ],
+      lastRefreshed: new Date().toISOString(),
+    });
   } catch (err) {
     req.log.error({ err }, "Failed to fetch inflation tab");
     res.status(500).json({ error: "Failed to fetch inflation data" });
