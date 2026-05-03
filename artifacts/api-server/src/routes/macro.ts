@@ -1547,7 +1547,8 @@ router.get("/macro/tab/global", async (req, res) => {
         indRow("jpyusd",  "USD / JPY",               jpyusd,  "Fed",       (v) => v.toFixed(2),        jpySig,   "Yen weakness signals risk-on carry trade; extreme weakness can trigger BoJ intervention and global volatility."),
         indRow("cnyusd",  "USD / CNY",               cnyusd,  "PBoC/Fed",  (v) => v.toFixed(4),        cnySig,   "Yuan management reflects PBoC stance. Sustained weakness exports deflation globally and pressures Asian FX peers."),
       ],
-      pmiNote: "Mfg = OECD Business Confidence Index (BCI); Composite = OECD CLI Normalized. Both centered at 100 — displayed as PMI-equivalent (50 = neutral). Data typically lagged ~3–4 months.",
+      pmiNote: "Mfg = OECD Business Confidence Index (BCI); Composite = OECD CLI Normalized. Both centered at 100, rescaled to PMI-equivalent (50 = neutral).",
+      pmiWarning: "These OECD series were discontinued on FRED and are no longer updated — most end Jan 2024, Global CLI ends Nov 2022. Real-time PMI flash data (S&P Global, ISM) requires a paid data subscription (Bloomberg, Refinitiv, etc.) and is not available on FRED's free tier. Values shown reflect the last available FRED reading.",
       lastRefreshed: new Date().toISOString(),
     });
   } catch (err) {

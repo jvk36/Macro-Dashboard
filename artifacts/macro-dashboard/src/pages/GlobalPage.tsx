@@ -5,12 +5,7 @@ import { formatDate } from "@/lib/utils";
 type GlobSig = "positive" | "neutral" | "warning" | "negative" | null;
 type TrendColor = "emerald" | "blue" | "amber" | "red" | "teal" | "zinc";
 
-interface PmiEntry {
-  value: number;
-  formatted: string;
-  date: string;
-  available: true;
-}
+interface PmiEntry { value: number; formatted: string; date: string; available: true }
 interface PmiEntryNA { available: false }
 
 interface PmiRow {
@@ -40,6 +35,7 @@ interface GlobalTabData {
   pmiTable: PmiRow[];
   indicators: IndRow[];
   pmiNote: string;
+  pmiWarning: string;
   lastRefreshed: string;
 }
 
@@ -60,7 +56,7 @@ const TREND_STYLE: Record<TrendColor, { text: string; bg: string; border: string
   zinc:    { text: "text-zinc-500",    bg: "rgba(113,113,122,0.12)", border: "border-zinc-700/50"    },
 };
 
-function sigText(s: GlobSig)   { return s ? SIG[s].text   : "text-zinc-400"; }
+function sigText(s: GlobSig) { return s ? SIG[s].text : "text-zinc-400"; }
 
 function StatusBadge({ signal, status }: { signal: GlobSig; status: string | null }) {
   if (!signal || !status) return null;
@@ -88,22 +84,49 @@ function TrendBadge({ trend, color }: { trend: string; color: TrendColor }) {
 }
 
 function SignalDot({ signal }: { signal: GlobSig }) {
-  return <span className={`w-2 h-2 rounded-full inline-block shrink-0 ${signal ? SIG[signal].dot : "bg-zinc-700"}`} />;
+  return (
+    <span className={`w-2 h-2 rounded-full inline-block shrink-0 ${signal ? SIG[signal].dot : "bg-zinc-700"}`} />
+  );
 }
 
-// ─── PMI value chip ────────────────────────────────────────────────────────────
 function PmiChip({ entry }: { entry: PmiEntry | PmiEntryNA }) {
   if (!entry.available) {
     return <span className="text-xs text-zinc-600">—</span>;
   }
-  const v = (entry as PmiEntry).value;
-  const color = v >= 51 ? "text-emerald-400" : v >= 49.5 ? "text-blue-400" : v >= 48 ? "text-amber-400" : "text-red-400";
+  const e = entry as PmiEntry;
+  const color =
+    e.value >= 51   ? "text-emerald-400" :
+    e.value >= 49.5 ? "text-blue-400"    :
+    e.value >= 48   ? "text-amber-400"   : "text-red-400";
   return (
     <div className="text-right">
-      <span className={`text-sm font-bold tabular-nums ${color}`}>
-        {(entry as PmiEntry).formatted}
-      </span>
-      <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate((entry as PmiEntry).date)}</div>
+      <span className={`text-sm font-bold tabular-nums ${color}`}>{e.formatted}</span>
+      <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(e.date)}</div>
+    </div>
+  );
+}
+
+// ─── Stale-data alert banner ───────────────────────────────────────────────────
+function StaleAlert({ text }: { text: string }) {
+  return (
+    <div
+      className="flex items-start gap-2.5 rounded-lg border border-amber-500/25 px-3.5 py-2.5"
+      style={{ backgroundColor: "rgba(251,191,36,0.07)" }}
+    >
+      <svg
+        className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+        />
+      </svg>
+      <p className="text-[11px] text-amber-400/90 leading-relaxed">{text}</p>
     </div>
   );
 }
@@ -122,7 +145,7 @@ function PmiTable({ rows, note }: { rows: PmiRow[]; note: string }) {
       {rows.map((row, idx) => (
         <div
           key={row.code}
-          className={`grid grid-cols-[2fr_1fr_1fr_1.4fr] gap-x-3 px-4 py-3 items-center ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors`}
+          className={`grid grid-cols-[2fr_1fr_1fr_1.4fr] gap-x-3 px-4 py-3 items-center hover:bg-zinc-800/20 transition-colors ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""}`}
         >
           <div className="flex items-center gap-2">
             <span className="text-base leading-none">{row.flag}</span>
@@ -161,7 +184,7 @@ function IndicatorsTable({ rows }: { rows: IndRow[] }) {
       {rows.map((row, idx) => (
         <div
           key={row.id}
-          className={`grid grid-cols-[2.2fr_1fr_1fr_0.9fr_2.8fr] gap-x-3 px-4 py-3 items-start ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors`}
+          className={`grid grid-cols-[2.2fr_1fr_1fr_0.9fr_2.8fr] gap-x-3 px-4 py-3 items-start hover:bg-zinc-800/20 transition-colors ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""}`}
         >
           <div className="flex items-center gap-2.5 pt-0.5">
             <SignalDot signal={row.signal} />
@@ -184,11 +207,9 @@ function IndicatorsTable({ rows }: { rows: IndRow[] }) {
           </div>
 
           <div className="text-xs text-zinc-400 pt-0.5">{row.source}</div>
-
           <div className="pt-0.5">
             <StatusBadge signal={row.signal} status={row.status} />
           </div>
-
           <div className="text-xs text-zinc-500 leading-relaxed">{row.impact}</div>
         </div>
       ))}
@@ -200,7 +221,8 @@ function IndicatorsTable({ rows }: { rows: IndRow[] }) {
 function GlobalSkeleton() {
   return (
     <div className="space-y-4">
-      <div className="h-[340px] rounded-xl border border-zinc-800 bg-zinc-900 animate-pulse" />
+      <div className="h-12 rounded-lg border border-zinc-800 bg-zinc-900 animate-pulse" />
+      <div className="h-[320px] rounded-xl border border-zinc-800 bg-zinc-900 animate-pulse" />
       <div className="h-[520px] rounded-xl border border-zinc-800 bg-zinc-900 animate-pulse" />
     </div>
   );
@@ -259,7 +281,10 @@ export default function GlobalPage() {
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
           A · Global PMI Composite Readings
         </div>
-        <PmiTable rows={data.pmiTable} note={data.pmiNote} />
+        <div className="space-y-2">
+          <StaleAlert text={data.pmiWarning} />
+          <PmiTable rows={data.pmiTable} note={data.pmiNote} />
+        </div>
       </div>
 
       {/* Section B */}
