@@ -279,20 +279,20 @@ export default function GlobalPage() {
       {/* Section A */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          A · Global PMI Composite Readings
+          A · Key Global Indicators
         </div>
-        <div className="space-y-2">
-          <StaleAlert text={data.pmiWarning} />
-          <PmiTable rows={data.pmiTable} note={data.pmiNote} />
-        </div>
+        <IndicatorsTable rows={data.indicators} />
       </div>
 
       {/* Section B */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
-          B · Key Global Indicators
+          B · Global PMI Composite Readings
         </div>
-        <IndicatorsTable rows={data.indicators} />
+        <div className="space-y-2">
+          <StaleAlert text={data.pmiWarning} />
+          <PmiTable rows={data.pmiTable} note={data.pmiNote} />
+        </div>
       </div>
 
       {/* Footer */}
