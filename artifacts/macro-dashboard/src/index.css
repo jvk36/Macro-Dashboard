@@ -2,22 +2,23 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
-/* ─── Premium Navy Theme ──────────────────────────────────────────────────────
- * Remap the zinc color scale to a deep navy palette.
+/* ─── Sage Green Light Theme ──────────────────────────────────────────────────
+ * Remap the zinc scale to an inverted sage-green palette.
+ * zinc-950 = lightest (page bg); zinc-100 = darkest (primary text).
  * Every component using zinc-* classes inherits the new scheme automatically.
  * ─────────────────────────────────────────────────────────────────────────── */
 @theme {
-  --color-zinc-950: #0b1120;
-  --color-zinc-900: #101929;
-  --color-zinc-800: #19273d;
-  --color-zinc-700: #243450;
-  --color-zinc-600: #375066;
-  --color-zinc-500: #56748f;
-  --color-zinc-400: #85a0b8;
-  --color-zinc-300: #aec3d4;
-  --color-zinc-200: #cddde9;
-  --color-zinc-100: #e5eff6;
-  --color-zinc-50:  #f2f7fb;
+  --color-zinc-950: #edf6f1;
+  --color-zinc-900: #f6fdf9;
+  --color-zinc-800: #cce4d6;
+  --color-zinc-700: #afd0be;
+  --color-zinc-600: #79a98e;
+  --color-zinc-500: #548a6c;
+  --color-zinc-400: #3b6e54;
+  --color-zinc-300: #275241;
+  --color-zinc-200: #17382c;
+  --color-zinc-100: #0c2419;
+  --color-zinc-50:  #07160f;
 }
 
 @custom-variant dark (&:is(.dark *));
