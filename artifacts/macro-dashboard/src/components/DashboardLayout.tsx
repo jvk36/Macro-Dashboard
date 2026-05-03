@@ -27,13 +27,13 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ activeTab, onTabChange, children }: DashboardLayoutProps) {
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ background: "linear-gradient(160deg, #f0e6d8 0%, #f3ebe2 50%, #ede3d8 100%)" }}>
+    <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ background: "linear-gradient(160deg, #e8f5ed 0%, #edf6f1 50%, #e6f4ec 100%)" }}>
       {/* Header */}
-      <header className="border-b border-zinc-800 sticky top-0 z-40 backdrop-blur-md" style={{ backgroundColor: "rgba(243,235,226,0.93)" }}>
+      <header className="border-b border-zinc-800 sticky top-0 z-40 backdrop-blur-md" style={{ backgroundColor: "rgba(237,246,241,0.92)" }}>
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center gap-3 h-14">
             <div className="flex items-center gap-2 flex-shrink-0">
-              <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-amber-600 to-amber-800 flex items-center justify-center">
+              <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center">
                 <BarChart2 className="h-4 w-4 text-white" />
               </div>
               <span className="font-bold text-sm text-zinc-100 hidden sm:block">MacroDash</span>
@@ -54,7 +54,7 @@ export function DashboardLayout({ activeTab, onTabChange, children }: DashboardL
                     className={cn(
                       "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm whitespace-nowrap transition-all relative",
                       isActive
-                        ? "bg-amber-700/12 text-amber-800 font-semibold"
+                        ? "bg-emerald-600/15 text-emerald-700 font-semibold"
                         : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800",
                     )}
                   >
