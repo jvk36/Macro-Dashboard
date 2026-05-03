@@ -2,23 +2,22 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
-/* ─── Sage Green Light Theme ──────────────────────────────────────────────────
- * Remap the zinc scale to an inverted sage-green palette.
- * zinc-950 = lightest (page bg); zinc-100 = darkest (primary text).
- * Every component using zinc-* classes inherits the new scheme automatically.
+/* ─── Dollar-Green Theme ──────────────────────────────────────────────────────
+ * Rich medium-green page background (US currency inspired), near-white cards.
+ * zinc-950 = page background; zinc-900 = card surface; zinc-100 = darkest text.
  * ─────────────────────────────────────────────────────────────────────────── */
 @theme {
-  --color-zinc-950: #edf6f1;
-  --color-zinc-900: #f6fdf9;
-  --color-zinc-800: #cce4d6;
-  --color-zinc-700: #afd0be;
-  --color-zinc-600: #79a98e;
-  --color-zinc-500: #548a6c;
-  --color-zinc-400: #3b6e54;
-  --color-zinc-300: #275241;
-  --color-zinc-200: #17382c;
-  --color-zinc-100: #0c2419;
-  --color-zinc-50:  #07160f;
+  --color-zinc-950: #7a9e80;
+  --color-zinc-900: #eef8f0;
+  --color-zinc-800: #8fb28f;
+  --color-zinc-700: #6d8e6e;
+  --color-zinc-600: #4f7150;
+  --color-zinc-500: #3c5e3d;
+  --color-zinc-400: #2a4a2b;
+  --color-zinc-300: #1d3320;
+  --color-zinc-200: #122318;
+  --color-zinc-100: #0a160c;
+  --color-zinc-50:  #060d08;
 }
 
 @custom-variant dark (&:is(.dark *));
