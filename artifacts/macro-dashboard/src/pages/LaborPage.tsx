@@ -1,167 +1,253 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import { TabComingSoon } from "@/components/TabComingSoon";
-import { SignalBadge } from "@/components/SignalDot";
-import { formatDate, formatNumber } from "@/lib/utils";
-import {
-  AreaChart, Area, LineChart, Line, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Legend,
-} from "recharts";
+import { formatDate } from "@/lib/utils";
 
-interface SeriesHistory {
-  seriesId: string;
-  title: string;
-  units: string;
-  frequency: string;
-  observations: { date: string; value: number }[];
-  latestValue: number;
-  latestDate: string;
+type LaborSig = "positive" | "neutral" | "warning" | "negative" | null;
+
+interface HealthMetric {
+  value: number;
+  formattedValue: string;
+  date: string;
+  signal: LaborSig;
+  status: string;
+}
+
+interface SuiteRow {
+  id: string;
+  name: string;
+  value: number | null;
+  formattedValue: string;
+  source: string;
+  signal: LaborSig;
+  status: string | null;
+  date: string | null;
+  available: boolean;
+  unavailableReason?: string;
 }
 
 interface LaborTabData {
-  nfp: SeriesHistory;
-  unemploymentRate: SeriesHistory;
-  participationRate: SeriesHistory;
-  averageHourlyEarnings: SeriesHistory;
-  joblessClaimsInitial: SeriesHistory;
-  jolts: SeriesHistory;
-  keyReadings: unknown[];
+  health: {
+    nfpMoM: HealthMetric | null;
+    unrate: HealthMetric | null;
+    aweYoY: HealthMetric | null;
+    jolts: HealthMetric | null;
+  };
+  suite: SuiteRow[];
+  lastRefreshed: string;
 }
 
+// ─── Signal palette ──────────────────────────────────────────────────────────
+const SIG: Record<NonNullable<LaborSig>, { text: string; bg: string; border: string; dot: string }> = {
+  positive: { text: "text-emerald-400", bg: "rgba(52,211,153,0.12)", border: "border-emerald-500/30", dot: "bg-emerald-400" },
+  neutral:  { text: "text-blue-400",    bg: "rgba(96,165,250,0.12)", border: "border-blue-500/30",    dot: "bg-blue-400" },
+  warning:  { text: "text-amber-400",   bg: "rgba(251,191,36,0.12)", border: "border-amber-500/30",   dot: "bg-amber-400" },
+  negative: { text: "text-red-400",     bg: "rgba(248,113,113,0.12)", border: "border-red-500/30",    dot: "bg-red-400" },
+};
+
+function sigText(s: LaborSig)   { return s ? SIG[s].text   : "text-zinc-400"; }
+function sigBorder(s: LaborSig) { return s ? SIG[s].border : "border-zinc-700"; }
+
+function StatusBadge({ signal, status }: { signal: LaborSig; status: string | null }) {
+  if (!signal || !status) return null;
+  const c = SIG[signal];
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${c.text} ${c.border} whitespace-nowrap`}
+      style={{ backgroundColor: c.bg }}
+    >
+      {status}
+    </span>
+  );
+}
+
+function SignalDot({ signal }: { signal: LaborSig }) {
+  return <span className={`w-2 h-2 rounded-full inline-block shrink-0 ${signal ? SIG[signal].dot : "bg-zinc-700"}`} />;
+}
+
+// ─── Health card descriptions ────────────────────────────────────────────────
+const HEALTH_META: Record<string, { subtitle: string; context: string }> = {
+  nfpMoM:  { subtitle: "Nonfarm Payrolls MoM", context: ">200K strong · 100–200K healthy · <50K weak · <0 contracting" },
+  unrate:  { subtitle: "Unemployment Rate (U-3)", context: "<4% full employment · 4–4.5% healthy · >5.5% elevated" },
+  aweYoY:  { subtitle: "Avg Hourly Earnings YoY", context: "3–3.5% sustainable · 3.5–4.5% wage pressure · >4.5% high pressure" },
+  jolts:   { subtitle: "Job Openings (JOLTS)", context: ">8M very tight · 7–8M tight · 6–7M balanced · <6M softening" },
+};
+
+function HealthCard({ id, label, metric }: { id: string; label: string; metric: HealthMetric | null }) {
+  const meta = HEALTH_META[id];
+  if (!metric) {
+    return (
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 flex flex-col gap-3">
+        <div className="text-xs font-semibold text-zinc-400">{label}</div>
+        <div className="text-2xl font-bold text-zinc-600">N/A</div>
+      </div>
+    );
+  }
+  return (
+    <div className={`rounded-xl border bg-zinc-900 p-5 flex flex-col gap-3 ${sigBorder(metric.signal)}`}>
+      <div>
+        <div className="text-xs font-semibold text-zinc-400">{meta.subtitle}</div>
+      </div>
+      <div className="flex items-end justify-between gap-2">
+        <div>
+          <div className={`text-3xl font-bold tabular-nums ${sigText(metric.signal)}`}>
+            {metric.formattedValue}
+          </div>
+          {metric.date && (
+            <div className="text-[10px] text-zinc-600 mt-0.5">As of {formatDate(metric.date)}</div>
+          )}
+        </div>
+        <StatusBadge signal={metric.signal} status={metric.status} />
+      </div>
+      <div className="text-[10px] text-zinc-600 leading-relaxed border-t border-zinc-800 pt-2">
+        {meta.context}
+      </div>
+    </div>
+  );
+}
+
+// ─── Full suite table ─────────────────────────────────────────────────────────
+function SuiteTable({ rows }: { rows: SuiteRow[] }) {
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
+      {/* Header */}
+      <div className="grid grid-cols-[2.5fr_1fr_0.7fr_1.2fr] gap-x-4 px-4 py-2.5 border-b border-zinc-800 bg-zinc-950">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Indicator</span>
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500 text-right">Latest Value</span>
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Source</span>
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Signal</span>
+      </div>
+
+      {rows.map((row, idx) => (
+        <div
+          key={row.id}
+          className={`grid grid-cols-[2.5fr_1fr_0.7fr_1.2fr] gap-x-4 px-4 py-3 items-center ${idx < rows.length - 1 ? "border-b border-zinc-800/60" : ""} hover:bg-zinc-800/20 transition-colors`}
+        >
+          {/* Name */}
+          <div className="flex items-center gap-2.5">
+            <SignalDot signal={row.signal} />
+            <span className="text-sm font-medium text-zinc-200">{row.name}</span>
+          </div>
+
+          {/* Value */}
+          <div className="text-right">
+            {row.available ? (
+              <div>
+                <span className={`text-sm font-bold tabular-nums ${sigText(row.signal)}`}>
+                  {row.formattedValue}
+                </span>
+                {row.date && (
+                  <div className="text-[10px] text-zinc-600 mt-0.5">{formatDate(row.date)}</div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <span className="text-xs text-zinc-600">—</span>
+                {row.unavailableReason && (
+                  <div className="text-[10px] text-zinc-700 mt-0.5 whitespace-nowrap">{row.unavailableReason}</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Source */}
+          <div className="text-xs text-zinc-400">{row.source}</div>
+
+          {/* Signal badge */}
+          <div>
+            <StatusBadge signal={row.signal} status={row.status} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+function LaborSkeleton() {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-40 rounded-xl border border-zinc-800 bg-zinc-900 animate-pulse" />
+        ))}
+      </div>
+      <div className="h-96 rounded-xl border border-zinc-800 bg-zinc-900 animate-pulse" />
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function LaborPage() {
-  const { data, isLoading, error } = useQuery<LaborTabData>({
-    queryKey: ["tab-labor"],
+  const { data, isLoading, error, refetch, isFetching } = useQuery<LaborTabData>({
+    queryKey: ["tab-labor-v2"],
     queryFn: () => apiFetch<LaborTabData>("/api/macro/tab/labor"),
     staleTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
 
-  if (isLoading) {
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 h-48 animate-pulse" />
-        ))}
-      </div>
-    );
-  }
+  if (isLoading) return <LaborSkeleton />;
 
   if (error || !data) {
     return (
-      <TabComingSoon
-        title="Labor Market"
-        description="Non-farm payrolls, unemployment, jobless claims, wage growth, and participation rate data."
-        items={["Non-Farm Payrolls (MoM)", "Unemployment Rate (U-3 & U-6)", "Participation Rate", "Average Hourly Earnings", "Initial Jobless Claims", "JOLTS Job Openings"]}
-      />
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-8 text-center">
+        <div className="text-zinc-400 text-sm mb-2">Failed to load labor market data</div>
+        <button onClick={() => refetch()} className="text-xs text-blue-400 hover:text-blue-300 underline">
+          Try again
+        </button>
+      </div>
     );
   }
 
-  const nfpChanges = data.nfp.observations.slice(1).map((o, i) => ({
-    date: o.date,
-    change: o.value - data.nfp.observations[i].value,
-  })).slice(-24);
-
-  const aweYoY = data.averageHourlyEarnings.observations.slice(12).map((o, i) => ({
-    date: o.date,
-    yoy: ((o.value - data.averageHourlyEarnings.observations[i].value) / data.averageHourlyEarnings.observations[i].value) * 100,
-  })).slice(-36);
-
   return (
     <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-zinc-100">Labor Market</h1>
+          <p className="text-sm text-zinc-500 mt-0.5">
+            Employment, wages, and workforce participation indicators
+          </p>
+        </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-40 border border-zinc-800 rounded-lg px-3 py-1.5"
+        >
+          <svg className={`w-3 h-3 ${isFetching ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Refresh
+        </button>
+      </div>
+
+      {/* Section A */}
       <div>
-        <h1 className="text-xl font-bold text-zinc-100">Labor Market</h1>
-        <p className="text-sm text-zinc-500 mt-0.5">Employment, wages, and workforce participation indicators</p>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          { label: "Unemployment Rate", value: data.unemploymentRate.latestValue, unit: "%", signal: data.unemploymentRate.latestValue <= 4.5 ? "positive" as const : data.unemploymentRate.latestValue <= 6 ? "neutral" as const : "negative" as const, badge: data.unemploymentRate.latestValue <= 4 ? "Full Employment" : data.unemploymentRate.latestValue <= 5 ? "Near Full" : "Elevated" },
-          { label: "Participation Rate", value: data.participationRate.latestValue, unit: "%", signal: data.participationRate.latestValue >= 63 ? "positive" as const : data.participationRate.latestValue >= 61 ? "neutral" as const : "negative" as const, badge: data.participationRate.latestValue >= 63 ? "Healthy" : "Below Trend" },
-          { label: "Avg Hourly Earnings YoY", value: aweYoY[aweYoY.length - 1]?.yoy ?? 0, unit: "%", signal: "neutral" as const, badge: "Wage Growth" },
-          { label: "Initial Claims (K)", value: Math.round(data.joblessClaimsInitial.latestValue / 1000), unit: "K", signal: data.joblessClaimsInitial.latestValue <= 220000 ? "positive" as const : data.joblessClaimsInitial.latestValue <= 280000 ? "neutral" as const : "negative" as const, badge: data.joblessClaimsInitial.latestValue <= 220000 ? "Low" : data.joblessClaimsInitial.latestValue <= 280000 ? "Normal" : "Elevated" },
-        ].map(({ label, value, unit, signal, badge }) => (
-          <div key={label} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="text-xs text-zinc-500 mb-1">{label}</div>
-            <div className="text-2xl font-bold font-mono text-zinc-100">{formatNumber(value, 1)}{unit}</div>
-            <SignalBadge signal={signal} label={badge} />
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-          <h3 className="text-sm font-semibold text-zinc-300 mb-1">NFP Monthly Change (000s)</h3>
-          <p className="text-xs text-zinc-500 mb-3">~150K needed to absorb new labor force entrants</p>
-          <ResponsiveContainer width="100%" height={160}>
-            <BarChart data={nfpChanges} margin={{ top: 2, right: 0, left: -25, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} interval={5} />
-              <YAxis tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v/1000).toFixed(0)}K`} />
-              <ReferenceLine y={150000} stroke="#fbbf24" strokeDasharray="4 4" />
-              <ReferenceLine y={0} stroke="#52525b" />
-              <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "8px", fontSize: 11 }} labelFormatter={formatDate} formatter={(v: number) => [`${(v/1000).toFixed(0)}K`, "Jobs Added"]} />
-              <Bar dataKey="change" fill="#34d399" radius={[2, 2, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+        <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
+          A · Labor Market Health
         </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-          <h3 className="text-sm font-semibold text-zinc-300 mb-1">Unemployment Rate</h3>
-          <p className="text-xs text-zinc-500 mb-3">Civilian unemployment rate (%)</p>
-          <ResponsiveContainer width="100%" height={160}>
-            <AreaChart data={data.unemploymentRate.observations.slice(-48)} margin={{ top: 2, right: 0, left: -25, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gradUnrate" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} interval={11} />
-              <YAxis tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
-              <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "8px", fontSize: 11 }} labelFormatter={formatDate} formatter={(v: number) => [`${v.toFixed(1)}%`, "Unemployment"]} />
-              <Area type="monotone" dataKey="value" stroke="#60a5fa" strokeWidth={2} fill="url(#gradUnrate)" dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-          <h3 className="text-sm font-semibold text-zinc-300 mb-1">Wage Growth (YoY)</h3>
-          <p className="text-xs text-zinc-500 mb-3">Average hourly earnings year-over-year change</p>
-          <ResponsiveContainer width="100%" height={160}>
-            <LineChart data={aweYoY} margin={{ top: 2, right: 0, left: -25, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} interval={8} />
-              <YAxis tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v.toFixed(1)}%`} />
-              <ReferenceLine y={3.5} stroke="#34d399" strokeDasharray="4 4" />
-              <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "8px", fontSize: 11 }} labelFormatter={formatDate} formatter={(v: number) => [`${v.toFixed(2)}%`, "Wage Growth"]} />
-              <Line type="monotone" dataKey="yoy" stroke="#a78bfa" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-          <h3 className="text-sm font-semibold text-zinc-300 mb-1">Initial Jobless Claims</h3>
-          <p className="text-xs text-zinc-500 mb-3">Weekly initial unemployment insurance filings</p>
-          <ResponsiveContainer width="100%" height={160}>
-            <AreaChart data={data.joblessClaimsInitial.observations.slice(-52)} margin={{ top: 2, right: 0, left: -25, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gradClaims" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#fb923c" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} interval={12} />
-              <YAxis tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v/1000).toFixed(0)}K`} />
-              <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "8px", fontSize: 11 }} labelFormatter={formatDate} formatter={(v: number) => [`${(v/1000).toFixed(0)}K`, "Claims"]} />
-              <Area type="monotone" dataKey="value" stroke="#fb923c" strokeWidth={2} fill="url(#gradClaims)" dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <HealthCard id="nfpMoM" label="Nonfarm Payrolls"         metric={data.health.nfpMoM}  />
+          <HealthCard id="unrate" label="Unemployment Rate"        metric={data.health.unrate}  />
+          <HealthCard id="aweYoY" label="Avg Hourly Earnings"      metric={data.health.aweYoY}  />
+          <HealthCard id="jolts"  label="Job Openings (JOLTS)"     metric={data.health.jolts}   />
         </div>
       </div>
-      <div className="text-xs text-zinc-600 border-t border-zinc-800 pt-4">
-        Data from FRED (Federal Reserve Bank of St. Louis) · For informational purposes only
+
+      {/* Section B */}
+      <div>
+        <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">
+          B · Full Labor Data Suite
+        </div>
+        <SuiteTable rows={data.suite} />
+      </div>
+
+      {/* Footer */}
+      <div className="text-xs text-zinc-600 border-t border-zinc-800 pt-4 flex items-center justify-between">
+        <span>BLS · ADP · DOL · FRED · For informational purposes only</span>
+        <span className="text-zinc-700">
+          Updated {new Date(data.lastRefreshed).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </span>
       </div>
     </div>
   );

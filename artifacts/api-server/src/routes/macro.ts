@@ -958,15 +958,171 @@ router.get("/macro/tab/inflation", async (req, res) => {
 
 router.get("/macro/tab/labor", async (req, res) => {
   try {
-    const [nfp, unemploymentRate, participationRate, averageHourlyEarnings, joblessClaimsInitial, jolts] = await Promise.all([
-      buildSeriesHistory(SERIES.NFP, 60),
-      buildSeriesHistory(SERIES.UNRATE, 60),
-      buildSeriesHistory(SERIES.PARTICIPATION, 60),
-      buildSeriesHistory(SERIES.AWE, 60),
-      buildSeriesHistory(SERIES.INITIAL_CLAIMS, 60),
-      buildSeriesHistory(SERIES.JOLTS, 60),
+    const [
+      nfpRes, adpRes, unrateRes, u6Res, civpartRes, primeAgeRes,
+      joltsRes, quitsRes, icsaRes, ccsaRes, awhtRes, aweRes,
+    ] = await Promise.allSettled([
+      getObservations(SERIES.NFP, 3),
+      getObservations("ADPWNUSNERSA", 3),
+      getLatestValue(SERIES.UNRATE),
+      getLatestValue("U6RATE"),
+      getLatestValue(SERIES.PARTICIPATION),
+      getLatestValue("LNS11300060"),
+      getLatestValue(SERIES.JOLTS),
+      getLatestValue("JTSQUR"),
+      getLatestValue(SERIES.INITIAL_CLAIMS),
+      getLatestValue(SERIES.CONT_CLAIMS),
+      getLatestValue("AWHAETP"),
+      getObservations(SERIES.AWE, 14),
     ]);
-    res.json({ nfp, unemploymentRate, participationRate, averageHourlyEarnings, joblessClaimsInitial, jolts, keyReadings: [] });
+
+    type LaborSig = "positive" | "neutral" | "warning" | "negative";
+
+    function mom(res: PromiseSettledResult<{ value: string; date: string }[]>): { value: number; date: string } | null {
+      if (res.status !== "fulfilled") return null;
+      const obs = res.value.filter((o) => o.value !== ".");
+      if (obs.length < 2) return null;
+      const latest = parseFloat(obs[obs.length - 1].value);
+      const prior  = parseFloat(obs[obs.length - 2].value);
+      if (!isFinite(latest) || !isFinite(prior)) return null;
+      return { value: latest - prior, date: obs[obs.length - 1].date };
+    }
+
+    function yoy(res: PromiseSettledResult<{ value: string; date: string }[]>): { value: number; date: string } | null {
+      if (res.status !== "fulfilled") return null;
+      const obs = res.value.filter((o) => o.value !== ".");
+      if (obs.length < 13) return null;
+      const latest  = parseFloat(obs[obs.length - 1].value);
+      const yearAgo = parseFloat(obs[obs.length - 13].value);
+      if (!isFinite(latest) || !isFinite(yearAgo) || yearAgo === 0) return null;
+      return { value: ((latest - yearAgo) / Math.abs(yearAgo)) * 100, date: obs[obs.length - 1].date };
+    }
+
+    function latest(res: PromiseSettledResult<{ value: number; date: string }>): { value: number; date: string } | null {
+      return res.status === "fulfilled" ? res.value : null;
+    }
+
+    const nfpMoM    = mom(nfpRes);
+    // ADPWNUSNERSA is in actual persons; normalise to thousands to match NFP units
+    const adpMoMRaw = mom(adpRes);
+    const adpMoM    = adpMoMRaw ? { value: adpMoMRaw.value / 1000, date: adpMoMRaw.date } : null;
+    const unrate    = latest(unrateRes);
+    const u6        = latest(u6Res);
+    const civpart   = latest(civpartRes);
+    const primeAge  = latest(primeAgeRes);
+    const jolts     = latest(joltsRes);
+    const quits     = latest(quitsRes);
+    const icsa      = latest(icsaRes);
+    const ccsa      = latest(ccsaRes);
+    const awht      = latest(awhtRes);
+    const aweYoY    = yoy(aweRes);
+
+    function nfpSig(v: number): { signal: LaborSig; status: string } {
+      if (v > 200)  return { signal: "positive", status: "Strong" };
+      if (v >= 100) return { signal: "positive", status: "Healthy" };
+      if (v >= 50)  return { signal: "neutral",  status: "Modest" };
+      if (v >= 0)   return { signal: "warning",  status: "Weak" };
+      return           { signal: "negative", status: "Contracting" };
+    }
+    function unrateSig(v: number): { signal: LaborSig; status: string } {
+      if (v < 4.0) return { signal: "positive", status: "Full Employment" };
+      if (v < 4.5) return { signal: "positive", status: "Healthy" };
+      if (v < 5.5) return { signal: "neutral",  status: "Moderate" };
+      if (v < 7.0) return { signal: "warning",  status: "Elevated" };
+      return          { signal: "negative", status: "High" };
+    }
+    function u6Sig(v: number): { signal: LaborSig; status: string } {
+      if (v < 7.0) return { signal: "positive", status: "Healthy" };
+      if (v < 8.5) return { signal: "neutral",  status: "Moderate" };
+      if (v < 10)  return { signal: "warning",  status: "Elevated" };
+      return          { signal: "negative", status: "High" };
+    }
+    function civpartSig(v: number): { signal: LaborSig; status: string } {
+      if (v >= 63.5) return { signal: "positive", status: "Strong" };
+      if (v >= 62.5) return { signal: "neutral",  status: "Healthy" };
+      if (v >= 61.0) return { signal: "warning",  status: "Below Trend" };
+      return            { signal: "negative", status: "Weak" };
+    }
+    function primeAgeSig(v: number): { signal: LaborSig; status: string } {
+      if (v >= 83.0) return { signal: "positive", status: "Strong" };
+      if (v >= 81.5) return { signal: "neutral",  status: "Healthy" };
+      if (v >= 79.0) return { signal: "warning",  status: "Below Trend" };
+      return            { signal: "negative", status: "Weak" };
+    }
+    function joltsSig(v: number): { signal: LaborSig; status: string } {
+      if (v > 8000) return { signal: "positive", status: "Very Tight" };
+      if (v > 7000) return { signal: "positive", status: "Tight" };
+      if (v > 6000) return { signal: "neutral",  status: "Balanced" };
+      if (v > 5000) return { signal: "warning",  status: "Softening" };
+      return           { signal: "negative", status: "Soft" };
+    }
+    function quitsSig(v: number): { signal: LaborSig; status: string } {
+      if (v >= 2.5) return { signal: "positive", status: "Workers Confident" };
+      if (v >= 2.0) return { signal: "neutral",  status: "Normal" };
+      if (v >= 1.5) return { signal: "warning",  status: "Declining" };
+      return           { signal: "negative", status: "Workers Cautious" };
+    }
+    function icsaSig(v: number): { signal: LaborSig; status: string } {
+      if (v < 220000) return { signal: "positive", status: "Low" };
+      if (v < 260000) return { signal: "neutral",  status: "Normal" };
+      if (v < 320000) return { signal: "warning",  status: "Elevated" };
+      return             { signal: "negative", status: "High" };
+    }
+    function ccsaSig(v: number): { signal: LaborSig; status: string } {
+      if (v < 1700000) return { signal: "positive", status: "Low" };
+      if (v < 2000000) return { signal: "neutral",  status: "Normal" };
+      if (v < 2500000) return { signal: "warning",  status: "Elevated" };
+      return              { signal: "negative", status: "High" };
+    }
+    function awhtSig(v: number): { signal: LaborSig; status: string } {
+      if (v >= 34.5) return { signal: "positive", status: "Extended" };
+      if (v >= 33.5) return { signal: "neutral",  status: "Normal" };
+      if (v >= 32.5) return { signal: "warning",  status: "Below Average" };
+      return            { signal: "negative", status: "Shortened" };
+    }
+    function wageSig(v: number): { signal: LaborSig; status: string } {
+      if (v < 2.5)  return { signal: "neutral",  status: "Subdued" };
+      if (v < 3.5)  return { signal: "positive", status: "Sustainable" };
+      if (v < 4.5)  return { signal: "warning",  status: "Wage Pressure" };
+      return           { signal: "negative", status: "High Wage Pressure" };
+    }
+
+    function row(id: string, name: string, data: { value: number; date: string } | null, source: string, fmt: (v: number) => string, sig: (v: number) => { signal: LaborSig; status: string }) {
+      if (!data) return { id, name, value: null, formattedValue: "N/A", source, signal: null, status: null, date: null, available: false };
+      const { signal, status } = sig(data.value);
+      return { id, name, value: data.value, formattedValue: fmt(data.value), source, signal, status, date: data.date, available: true };
+    }
+
+    const fmtK    = (v: number) => `${v >= 0 ? "+" : ""}${Math.round(v).toLocaleString()}K`;
+    const fmtPct  = (v: number) => `${v.toFixed(1)}%`;
+    const fmtYoY  = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+    const fmtM    = (v: number) => `${(v / 1000).toFixed(2)}M`;
+    const fmtKraw = (v: number) => `${Math.round(v / 1000).toLocaleString()}K`;
+    const fmtHrs  = (v: number) => `${v.toFixed(1)} hrs`;
+
+    res.json({
+      health: {
+        nfpMoM:   nfpMoM  ? { ...nfpSig(nfpMoM.value),  value: nfpMoM.value,  formattedValue: fmtK(nfpMoM.value),  date: nfpMoM.date  } : null,
+        unrate:   unrate  ? { ...unrateSig(unrate.value), value: unrate.value,  formattedValue: fmtPct(unrate.value), date: unrate.date  } : null,
+        aweYoY:   aweYoY  ? { ...wageSig(aweYoY.value),  value: aweYoY.value,  formattedValue: fmtYoY(aweYoY.value), date: aweYoY.date  } : null,
+        jolts:    jolts   ? { ...joltsSig(jolts.value),  value: jolts.value,   formattedValue: fmtM(jolts.value),   date: jolts.date   } : null,
+      },
+      suite: [
+        row("nfp",       "Nonfarm Payrolls (NFP)",         nfpMoM,  "BLS",   fmtK,    nfpSig),
+        row("adp",       "ADP Private Payrolls",            adpMoM,  "ADP",   fmtK,    nfpSig),
+        row("unrate",    "U-3 Unemployment Rate",           unrate,  "BLS",   fmtPct,  unrateSig),
+        row("u6",        "U-6 Underemployment Rate",        u6,      "BLS",   fmtPct,  u6Sig),
+        row("civpart",   "Labor Force Participation Rate",  civpart, "BLS",   fmtPct,  civpartSig),
+        row("primeage",  "Prime-Age LFPR (25–54)",          primeAge,"BLS",   fmtPct,  primeAgeSig),
+        row("jolts",     "Job Openings (JOLTS)",            jolts,   "BLS",   fmtM,    joltsSig),
+        row("quits",     "Quits Rate",                      quits,   "BLS",   fmtPct,  quitsSig),
+        row("icsa",      "Initial Jobless Claims",          icsa,    "DOL",   fmtKraw, icsaSig),
+        row("ccsa",      "Continuing Claims",               ccsa,    "DOL",   fmtKraw, ccsaSig),
+        { id: "challenger", name: "Challenger Layoffs", value: null, formattedValue: "N/A", source: "Challenger", signal: null, status: null, date: null, available: false, unavailableReason: "Not on FRED free tier" },
+        row("awht",      "Average Weekly Hours",            awht,    "BLS",   fmtHrs,  awhtSig),
+      ],
+      lastRefreshed: new Date().toISOString(),
+    });
   } catch (err) {
     req.log.error({ err }, "Failed to fetch labor tab");
     res.status(500).json({ error: "Failed to fetch labor data" });
