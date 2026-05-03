@@ -37,7 +37,7 @@ export function MarketCycleGauge({ phase, label, confidence, description, isLoad
   const activeIdx = config.position;
 
   return (
-    <div className={cn("rounded-xl border border-zinc-800 p-5 ring-1", config.bgColor, config.ringColor)}>
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">Market Cycle Phase</h3>
         <span className="text-xs text-zinc-500">{confidence}% confidence</span>

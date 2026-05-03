@@ -110,12 +110,9 @@ function PmiChip({ entry }: { entry: PmiEntry | PmiEntryNA }) {
 function StaleAlert({ text }: { text?: string }) {
   if (!text) return null;
   return (
-    <div
-      className="flex items-start gap-2.5 rounded-lg border border-amber-500/25 px-3.5 py-2.5"
-      style={{ backgroundColor: "rgba(251,191,36,0.07)" }}
-    >
+    <div className="flex items-start gap-2.5 rounded-lg border border-zinc-800 px-3.5 py-2.5">
       <svg
-        className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0"
+        className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0"
         fill="none"
         stroke="currentColor"
         viewBox="0 0 24 24"
@@ -127,7 +124,7 @@ function StaleAlert({ text }: { text?: string }) {
           d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
         />
       </svg>
-      <p className="text-[11px] text-amber-400/90 leading-relaxed">{text}</p>
+      <p className="text-[11px] font-bold text-zinc-400 leading-relaxed">{text}</p>
     </div>
   );
 }
