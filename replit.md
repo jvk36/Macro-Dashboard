@@ -85,3 +85,4 @@ Workflows handle everything:
 - ISM Manufacturing PMI is not available on FRED's free API; using Industrial Production (INDPRO) YoY as proxy
 - FRED HY/IG spread series (BAMLH0A0HYM2, BAMLC0A0CM) return values in percent — multiply by 100 for basis points display
 - PAYEMS (NFP) is in thousands of employees — monthly changes are in thousands (200 = 200K jobs)
+
